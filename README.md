@@ -34,6 +34,12 @@ Both directions disable Nagle and force-close on disconnect (see
 | `PROXY_ROUTES` | `;`-separated list of `listen:service:upstream:port`. Example below. |
 | `EXTERNAL_HOST_<service>` | Override the address advertised to clients for `<service>`. |
 | `EXTERNAL_PORT_<service>` | Override the port advertised to clients for `<service>`. |
+| `XOR_TABLE_HEX` | (BYO) Inline hex string of the C→S XOR cipher table (whitespace / commas / `0x` ok). Optional — proxy still runs without it because no current rewriter reads C→S. Future C→S inspection hooks will throw if absent. |
+| `XOR_TABLE_PATH` | (BYO) Path to a file containing the XOR table as hex text or raw binary. Hex is tried first; falls back to binary if the file isn't ASCII hex. |
+
+The XOR table is operator-supplied (BYO) — different server builds may use
+different tables, and the proxy ships none. See
+`src/FiestaProxy/Crypto/FiestaXorCipher.cs` for the cipher contract.
 
 `PROXY_ROUTES` example:
 

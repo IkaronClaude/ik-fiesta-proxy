@@ -1,3 +1,5 @@
+using FiestaProxy.Crypto;
+
 namespace FiestaProxy.Config;
 
 /// <summary>
@@ -19,6 +21,12 @@ public sealed class ProxyConfig
 {
     public required IReadOnlyList<ProxyRoute> Routes { get; init; }
     public required string PublicIp { get; init; }
+    /// <summary>
+    /// Operator-supplied XOR cipher table for C→S decryption. Null means
+    /// the operator didn't supply one — the proxy still works (NullCipher
+    /// path) because no current rewriter reads C→S traffic.
+    /// </summary>
+    public required byte[]? XorTable { get; init; }
 
     public static ProxyConfig FromEnvironment()
     {
@@ -42,7 +50,9 @@ public sealed class ProxyConfig
         if (routes.Count == 0)
             throw new InvalidOperationException("PROXY_ROUTES yielded zero routes");
 
-        return new ProxyConfig { Routes = routes, PublicIp = publicIp };
+        var xorTable = XorTableLoader.FromEnvironment();
+
+        return new ProxyConfig { Routes = routes, PublicIp = publicIp, XorTable = xorTable };
     }
 
     /// <summary>Look up the operator-facing endpoint for a service name.</summary>
