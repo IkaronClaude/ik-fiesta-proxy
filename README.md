@@ -36,6 +36,13 @@ Both directions disable Nagle and force-close on disconnect (see
 | `EXTERNAL_PORT_<service>` | Override the port advertised to clients for `<service>`. |
 | `XOR_TABLE_HEX` | (BYO) Inline hex string of the C→S XOR cipher table (whitespace / commas / `0x` ok). Optional — proxy still runs without it because no current rewriter reads C→S. Future C→S inspection hooks will throw if absent. |
 | `XOR_TABLE_PATH` | (BYO) Path to a file containing the XOR table as hex text or raw binary. Hex is tried first; falls back to binary if the file isn't ASCII hex. |
+| `S2S_ROUTES` | (S2S mode) `;`-separated list of `bind:port:upstream:port`. Bind `127.0.0.1` = outbound (local exe → peer pod); bind `0.0.0.0` = inbound (peer pod → my exe). No rewriters, no cipher — pure byte passthrough. |
+| `S2S_ALLOWED_CIDRS` | (S2S mode) Comma-separated CIDR list; only enforced on inbound listeners. Default: RFC1918 + loopback + link-local. |
+
+The proxy can run in **either or both** modes simultaneously. Setting only
+`S2S_ROUTES` (no `PROXY_ROUTES`) means PUBLIC_IP and rewriter / XOR
+configuration are unused — pure s2s tunnel mode, suitable for baking into
+the server runtime image alongside the exe.
 
 The XOR table is operator-supplied (BYO) — different server builds may use
 different tables, and the proxy ships none. See

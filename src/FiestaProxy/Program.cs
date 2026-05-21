@@ -8,21 +8,34 @@ internal static class Program
     private static async Task<int> Main(string[] args)
     {
         var config = ProxyConfig.FromEnvironment();
-        Log.Info($"FiestaProxy starting. Listeners:");
-        foreach (var route in config.Routes)
-            Log.Info($"  :{route.ListenPort,-5} -> {route.UpstreamHost}:{route.UpstreamPort}  ({route.ServiceName})");
-        Log.Info(config.XorTable is null
-            ? "  XOR table not configured (BYO via XOR_TABLE_PATH / XOR_TABLE_HEX) — running NullCipher only"
-            : $"  XOR table loaded: {config.XorTable.Length} bytes (BYO)");
+        Log.Info($"FiestaProxy starting.");
+        if (config.Routes.Count > 0)
+        {
+            Log.Info($"Client-facing routes:");
+            foreach (var route in config.Routes)
+                Log.Info($"  :{route.ListenPort,-5} -> {route.UpstreamHost}:{route.UpstreamPort}  ({route.ServiceName})");
+            Log.Info(config.XorTable is null
+                ? "  XOR table not configured (BYO via XOR_TABLE_PATH / XOR_TABLE_HEX) — running NullCipher only"
+                : $"  XOR table loaded: {config.XorTable.Length} bytes (BYO)");
+        }
+        if (config.S2sRoutes.Count > 0)
+        {
+            Log.Info($"S2S routes:");
+            foreach (var r in config.S2sRoutes)
+                Log.Info($"  {(r.IsInbound ? "inbound " : "outbound")} {r.BindAddress}:{r.ListenPort} -> {r.UpstreamHost}:{r.UpstreamPort}");
+            Log.Info($"  inbound allow CIDRs: {string.Join(", ", config.S2sAllowedCidrs)}");
+        }
 
         var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-        var listenerTasks = config.Routes
-            .Select(r => new ProxyListener(r, config).RunAsync(cts.Token))
-            .ToArray();
+        var tasks = new List<Task>();
+        foreach (var r in config.Routes)
+            tasks.Add(new ProxyListener(r, config).RunAsync(cts.Token));
+        foreach (var r in config.S2sRoutes)
+            tasks.Add(new S2sListener(r, config.S2sAllowedCidrs).RunAsync(cts.Token));
 
-        try { await Task.WhenAll(listenerTasks); }
+        try { await Task.WhenAll(tasks); }
         catch (OperationCanceledException) { }
         return 0;
     }
