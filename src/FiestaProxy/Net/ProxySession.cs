@@ -41,37 +41,55 @@ public sealed class ProxySession
         var clientEp = _client.Client.RemoteEndPoint?.ToString() ?? "?";
         Log.Info($"[{_route.ServiceName}] accept {clientEp}");
 
-        using var upstream = new TcpClient();
-        await upstream.ConnectAsync(_route.UpstreamHost, _route.UpstreamPort, ct);
+        TcpClient? upstream = null;
+        try
+        {
+            upstream = new TcpClient();
+            try
+            {
+                await upstream.ConnectAsync(_route.UpstreamHost, _route.UpstreamPort, ct);
+            }
+            catch (Exception ex)
+            {
+                // Upstream refused → close the client side so they don't wait
+                // for a handshake that's never coming. Without this the client
+                // sees a TCP-open but no protocol bytes flowing, and only
+                // their app-layer timeout (often minutes) eventually catches
+                // the wedge.
+                Log.Warn($"[{_route.ServiceName}] upstream {_route.UpstreamHost}:{_route.UpstreamPort} unreachable ({ex.GetType().Name}: {ex.Message})");
+                return;
+            }
 
-        // Nagle stalls small Fiesta packets behind the 40ms ACK timer — kill it on
-        // both legs so opcodes ship immediately instead of pooling.
-        _client.NoDelay = true;
-        upstream.NoDelay = true;
+            // Nagle stalls small Fiesta packets behind the 40ms ACK timer — kill it
+            // on both legs so opcodes ship immediately instead of pooling.
+            _client.NoDelay = true;
+            upstream.NoDelay = true;
 
-        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var clientStream = _client.GetStream();
-        var upstreamStream = upstream.GetStream();
+            using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var clientStream = _client.GetStream();
+            var upstreamStream = upstream.GetStream();
 
-        // S→C is plaintext on the wire — NullCipher is correct here.
-        var upstreamConn = new FiestaConnection(upstreamStream, NullCipher.Instance);
-        var clientConn = new FiestaConnection(clientStream, NullCipher.Instance);
+            // S→C is plaintext on the wire — NullCipher is correct here.
+            var upstreamConn = new FiestaConnection(upstreamStream, NullCipher.Instance);
+            var clientConn = new FiestaConnection(clientStream, NullCipher.Instance);
 
-        var c2s = PumpRawAsync(clientStream, upstreamStream, sessionCts.Token);
-        var s2c = PumpServerToClientAsync(upstreamConn, clientConn, sessionCts.Token);
+            var c2s = PumpRawAsync(clientStream, upstreamStream, sessionCts.Token);
+            var s2c = PumpServerToClientAsync(upstreamConn, clientConn, sessionCts.Token);
 
-        try { await Task.WhenAny(c2s, s2c); }
+            try { await Task.WhenAny(c2s, s2c); }
+            finally
+            {
+                sessionCts.Cancel();
+                try { _client.Close(); } catch { }
+                try { upstream.Close(); } catch { }
+                try { await Task.WhenAll(c2s, s2c); } catch { /* swallow */ }
+            }
+        }
         finally
         {
-            // One side closed — tear down both sockets immediately so the
-            // other pump's blocked ReadAsync throws right away. CancellationToken
-            // on NetworkStream.ReadAsync is advisory on Windows: the socket
-            // read won't actually unblock until the OS times out the half-open
-            // connection (30s+). Disposing the TcpClient forces it.
-            sessionCts.Cancel();
+            // Always close client side, even on upstream-connect failure.
             try { _client.Close(); } catch { }
-            try { upstream.Close(); } catch { }
-            try { await Task.WhenAll(c2s, s2c); } catch { /* swallow */ }
+            try { upstream?.Close(); } catch { }
             Log.Info($"[{_route.ServiceName}] close {clientEp}");
         }
     }

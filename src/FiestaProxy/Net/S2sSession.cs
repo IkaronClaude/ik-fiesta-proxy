@@ -29,28 +29,51 @@ public sealed class S2sSession
         var dir = _route.IsInbound ? "inbound" : "outbound";
         Log.Info($"s2s {dir} accept {peerEp} :{_route.ListenPort}");
 
-        using var upstream = new TcpClient();
-        await upstream.ConnectAsync(_route.UpstreamHost, _route.UpstreamPort, ct);
+        TcpClient? upstream = null;
+        try
+        {
+            upstream = new TcpClient();
+            try
+            {
+                await upstream.ConnectAsync(_route.UpstreamHost, _route.UpstreamPort, ct);
+            }
+            catch (Exception ex)
+            {
+                // Upstream refused / unreachable. We MUST close _peer here —
+                // otherwise the exe sits with a half-open connection waiting
+                // for protocol bytes that never arrive, and only its app-layer
+                // heartbeat (often 3+ minutes) eventually catches the wedge.
+                // The outer finally handles that close; just log here.
+                Log.Warn($"s2s {dir} upstream {_route.UpstreamHost}:{_route.UpstreamPort} unreachable ({ex.GetType().Name}: {ex.Message})");
+                return;
+            }
 
-        _peer.NoDelay = true;
-        upstream.NoDelay = true;
+            _peer.NoDelay = true;
+            upstream.NoDelay = true;
 
-        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var peerStream = _peer.GetStream();
-        var upStream = upstream.GetStream();
+            using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var peerStream = _peer.GetStream();
+            var upStream = upstream.GetStream();
 
-        var ab = PumpAsync(peerStream, upStream, sessionCts.Token);
-        var ba = PumpAsync(upStream, peerStream, sessionCts.Token);
+            var ab = PumpAsync(peerStream, upStream, sessionCts.Token);
+            var ba = PumpAsync(upStream, peerStream, sessionCts.Token);
 
-        try { await Task.WhenAny(ab, ba); }
+            try { await Task.WhenAny(ab, ba); }
+            finally
+            {
+                sessionCts.Cancel();
+                try { _peer.Close(); } catch { }
+                try { upstream.Close(); } catch { }
+                try { await Task.WhenAll(ab, ba); } catch { /* swallow */ }
+            }
+        }
         finally
         {
-            sessionCts.Cancel();
-            // Force-close both sockets so the still-blocked Read on the other
-            // pump throws immediately (same trick as ProxySession.cs).
+            // Always close the inbound side, even on upstream-connect failure
+            // or any other short-circuit path. Without this the exe's
+            // connection dangles until its heartbeat timeout fires.
             try { _peer.Close(); } catch { }
-            try { upstream.Close(); } catch { }
-            try { await Task.WhenAll(ab, ba); } catch { /* swallow */ }
+            try { upstream?.Close(); } catch { }
             Log.Info($"s2s {dir} close  {peerEp} :{_route.ListenPort}");
         }
     }
