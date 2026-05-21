@@ -1,0 +1,9 @@
+bin/
+obj/
+publish/
+*.user
+*.suo
+.vs/
+*.swp
+__pycache__/
+*.pyc

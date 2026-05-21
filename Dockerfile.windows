@@ -1,0 +1,23 @@
+# escape=`
+#
+# fiesta-proxy: Windows (Server Core ltsc2022) variant. Same binary, native
+# Windows runtime so the proxy can sit alongside fiesta-server-runtime:windows
+# containers without a Linux subsystem in the stack.
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0-windowsservercore-ltsc2022 AS build
+WORKDIR C:\src
+
+COPY FiestaProxy.sln .
+COPY src\FiestaProxy\FiestaProxy.csproj src\FiestaProxy\
+COPY lib\FiestaLib-Reloaded\src\FiestaLibReloaded.Networking\FiestaLibReloaded.Networking.csproj lib\FiestaLib-Reloaded\src\FiestaLibReloaded.Networking\
+RUN dotnet restore src\FiestaProxy\FiestaProxy.csproj
+
+COPY src\ src\
+COPY lib\ lib\
+RUN dotnet publish src\FiestaProxy\FiestaProxy.csproj -c Release -o C:\app --no-restore /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/runtime:10.0-windowsservercore-ltsc2022
+WORKDIR C:\app
+COPY --from=build C:\app\ .
+ENV DOTNET_EnableDiagnostics=0
+ENTRYPOINT ["dotnet", "FiestaProxy.dll"]

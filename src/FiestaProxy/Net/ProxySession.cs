@@ -1,0 +1,114 @@
+using System.Net.Sockets;
+using FiestaLibReloaded.Networking;
+using FiestaProxy.Config;
+using FiestaProxy.Rewrites;
+
+namespace FiestaProxy.Net;
+
+/// <summary>
+/// One accepted player connection.
+///
+/// Traffic model (per Ikaron/fiesta-filter analysis):
+///   client -> server : XOR-encrypted after a handshake notification. The proxy
+///                      pumps these bytes opaque: it never inspects C→S content
+///                      so encrypted bytes pass through byte-for-byte and the
+///                      cipher is irrelevant to the hot path.
+///   server -> client : plaintext on the wire. FiestaConnection (NullCipher)
+///                      reads frames, the rewriter registry patches IP+port
+///                      fields, and the rewritten frame is written back to
+///                      the client.
+///
+/// FiestaXorCipher (lifted from fiesta-filter) is wired in for symmetry but
+/// stays dormant unless future hooks need to read C→S traffic.
+/// </summary>
+public sealed class ProxySession
+{
+    private readonly TcpClient _client;
+    private readonly ProxyRoute _route;
+    private readonly ProxyConfig _config;
+    private readonly PacketRewriterRegistry _rewriters;
+
+    public ProxySession(TcpClient client, ProxyRoute route, ProxyConfig config)
+    {
+        _client = client;
+        _route = route;
+        _config = config;
+        _rewriters = PacketRewriterRegistry.Default(config);
+    }
+
+    public async Task RunAsync(CancellationToken ct)
+    {
+        var clientEp = _client.Client.RemoteEndPoint?.ToString() ?? "?";
+        Log.Info($"[{_route.ServiceName}] accept {clientEp}");
+
+        using var upstream = new TcpClient();
+        await upstream.ConnectAsync(_route.UpstreamHost, _route.UpstreamPort, ct);
+
+        // Nagle stalls small Fiesta packets behind the 40ms ACK timer — kill it on
+        // both legs so opcodes ship immediately instead of pooling.
+        _client.NoDelay = true;
+        upstream.NoDelay = true;
+
+        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var clientStream = _client.GetStream();
+        var upstreamStream = upstream.GetStream();
+
+        // S→C is plaintext on the wire — NullCipher is correct here.
+        var upstreamConn = new FiestaConnection(upstreamStream, NullCipher.Instance);
+        var clientConn = new FiestaConnection(clientStream, NullCipher.Instance);
+
+        var c2s = PumpRawAsync(clientStream, upstreamStream, sessionCts.Token);
+        var s2c = PumpServerToClientAsync(upstreamConn, clientConn, sessionCts.Token);
+
+        try { await Task.WhenAny(c2s, s2c); }
+        finally
+        {
+            // One side closed — tear down both sockets immediately so the
+            // other pump's blocked ReadAsync throws right away. CancellationToken
+            // on NetworkStream.ReadAsync is advisory on Windows: the socket
+            // read won't actually unblock until the OS times out the half-open
+            // connection (30s+). Disposing the TcpClient forces it.
+            sessionCts.Cancel();
+            try { _client.Close(); } catch { }
+            try { upstream.Close(); } catch { }
+            try { await Task.WhenAll(c2s, s2c); } catch { /* swallow */ }
+            Log.Info($"[{_route.ServiceName}] close {clientEp}");
+        }
+    }
+
+    /// <summary>Plaintext byte pump. Client → server traffic is unencrypted.</summary>
+    private static async Task PumpRawAsync(NetworkStream from, NetworkStream to, CancellationToken ct)
+    {
+        var buf = new byte[8192];
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var n = await from.ReadAsync(buf, ct);
+                if (n <= 0) return;
+                await to.WriteAsync(buf.AsMemory(0, n), ct);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (IOException) { /* peer closed */ }
+        catch (ObjectDisposedException) { /* socket force-closed by other pump */ }
+    }
+
+    /// <summary>Framed pump. Decrypts, rewrites, re-encrypts.</summary>
+    private async Task PumpServerToClientAsync(FiestaConnection upstream, FiestaConnection client, CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var pkt = await upstream.ReadPacketAsync(ct);
+                var rewritten = _rewriters.Apply(pkt);
+                await client.WritePacketAsync(rewritten, ct);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (EndOfStreamException) { /* peer closed */ }
+        catch (IOException) { /* peer closed */ }
+        catch (ObjectDisposedException) { /* socket force-closed by other pump */ }
+    }
+}
