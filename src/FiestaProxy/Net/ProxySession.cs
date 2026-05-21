@@ -76,20 +76,14 @@ public sealed class ProxySession
             var c2s = PumpRawAsync(clientStream, upstreamStream, sessionCts.Token);
             var s2c = PumpServerToClientAsync(upstreamConn, clientConn, sessionCts.Token);
 
-            try { await Task.WhenAny(c2s, s2c); }
-            finally
-            {
-                sessionCts.Cancel();
-                // Half-close (Shutdown) instead of Close — wakes the blocked
-                // Read on the other pump with a clean EOF rather than RST.
-                // A RST confuses peers into thinking the connection died
-                // abnormally; they then suppress the bytes they had already
-                // buffered (e.g., a WORLDSELECT_ACK that was in flight).
-                // Final Close() happens after both pumps drain.
-                try { _client.Client.Shutdown(System.Net.Sockets.SocketShutdown.Both); } catch { }
-                try { upstream.Client.Shutdown(System.Net.Sockets.SocketShutdown.Both); } catch { }
-                try { await Task.WhenAll(c2s, s2c); } catch { /* swallow */ }
-            }
+            // Let pumps run to natural completion. When one peer closes (FIN),
+            // their pump returns EOF; the OTHER side will eventually see its
+            // peer close too (the close cascades through the TCP stack and
+            // app-layer code on both sides) and that pump also returns. No
+            // need to force-close from here — that causes RST on Windows and
+            // peers suppress in-flight bytes (a server-sent WORLDSELECT_ACK
+            // still in the receive buffer gets discarded on RST).
+            await Task.WhenAll(c2s, s2c);
         }
         finally
         {

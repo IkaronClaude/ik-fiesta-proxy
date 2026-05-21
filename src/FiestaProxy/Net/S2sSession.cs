@@ -58,18 +58,9 @@ public sealed class S2sSession
             var ab = PumpAsync(peerStream, upStream, sessionCts.Token);
             var ba = PumpAsync(upStream, peerStream, sessionCts.Token);
 
-            try { await Task.WhenAny(ab, ba); }
-            finally
-            {
-                sessionCts.Cancel();
-                // Half-close (Shutdown) instead of Close — wakes the blocked
-                // Read on the other pump with EOF rather than RST. RST trips
-                // peers into "abnormal termination" handling and they may
-                // suppress in-flight bytes. Final Close() runs after pumps drain.
-                try { _peer.Client.Shutdown(System.Net.Sockets.SocketShutdown.Both); } catch { }
-                try { upstream.Client.Shutdown(System.Net.Sockets.SocketShutdown.Both); } catch { }
-                try { await Task.WhenAll(ab, ba); } catch { /* swallow */ }
-            }
+            // Run pumps to natural completion — the EOF cascade through both
+            // sides terminates them both without RST.
+            await Task.WhenAll(ab, ba);
         }
         finally
         {
