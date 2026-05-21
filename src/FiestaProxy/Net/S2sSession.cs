@@ -62,8 +62,12 @@ public sealed class S2sSession
             finally
             {
                 sessionCts.Cancel();
-                try { _peer.Close(); } catch { }
-                try { upstream.Close(); } catch { }
+                // Half-close (Shutdown) instead of Close — wakes the blocked
+                // Read on the other pump with EOF rather than RST. RST trips
+                // peers into "abnormal termination" handling and they may
+                // suppress in-flight bytes. Final Close() runs after pumps drain.
+                try { _peer.Client.Shutdown(System.Net.Sockets.SocketShutdown.Both); } catch { }
+                try { upstream.Client.Shutdown(System.Net.Sockets.SocketShutdown.Both); } catch { }
                 try { await Task.WhenAll(ab, ba); } catch { /* swallow */ }
             }
         }

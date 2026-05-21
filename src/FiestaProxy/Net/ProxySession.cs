@@ -80,8 +80,14 @@ public sealed class ProxySession
             finally
             {
                 sessionCts.Cancel();
-                try { _client.Close(); } catch { }
-                try { upstream.Close(); } catch { }
+                // Half-close (Shutdown) instead of Close — wakes the blocked
+                // Read on the other pump with a clean EOF rather than RST.
+                // A RST confuses peers into thinking the connection died
+                // abnormally; they then suppress the bytes they had already
+                // buffered (e.g., a WORLDSELECT_ACK that was in flight).
+                // Final Close() happens after both pumps drain.
+                try { _client.Client.Shutdown(System.Net.Sockets.SocketShutdown.Both); } catch { }
+                try { upstream.Client.Shutdown(System.Net.Sockets.SocketShutdown.Both); } catch { }
                 try { await Task.WhenAll(c2s, s2c); } catch { /* swallow */ }
             }
         }
