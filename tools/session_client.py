@@ -381,9 +381,9 @@ def phase_zone(host, port, capture_bodies, wm_handle):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("pcap")
-    p.add_argument("--proxy-login", default="127.0.0.1:19010")
-    p.add_argument("--proxy-wm", default="127.0.0.1:19013")
-    p.add_argument("--proxy-zone", default="127.0.0.1:19019")
+    p.add_argument("--proxy-login", default="127.0.0.1:9010")
+    p.add_argument("--proxy-wm", default="127.0.0.1:9013")
+    p.add_argument("--proxy-zone", default="127.0.0.1:9019")
     args = p.parse_args()
 
     streams = load_streams(args.pcap)
