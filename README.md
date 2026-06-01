@@ -19,21 +19,46 @@ Login → WM → Zone chain against the docker stack.
 - **client → server** is XOR-encrypted (after the S→C `NC_MISC_SEED_ACK`
   handshake). The proxy pumps these bytes opaquely — no rewrite hook reads
   them today, so the proxy never needs the cipher in the hot path.
-- **server → client** is plaintext on the wire. The proxy parses frames,
-  applies any matching rewriter, and writes the (possibly resized) frame to
-  the client.
+- **server → client** is plaintext on the wire. On a `rewrite` route the
+  proxy parses frames, applies any matching rewriter, and writes the
+  (possibly resized) frame to the client.
 
-Both directions disable Nagle and force-close on disconnect (see
-`src/FiestaProxy/Net/ProxySession.cs`).
+A route can also run in **`opaque`** mode: no framing, no rewriters, just a
+raw byte pump in both directions. Use it for the in-game **client → Zone**
+channel — the Zone endpoint was already patched in the WM channel's
+`CHAR_LOGIN_ACK`, so the Zone connection carries nothing the proxy needs to
+rewrite, and it's the noisiest connection in the stack. See the `mode` field
+of `PROXY_ROUTES` below.
+
+Both directions disable Nagle. The proxy lets pumps run to natural EOF
+(no force-close) so in-flight bytes aren't lost to an RST.
+
+### Upstream boot races (health-gated listeners)
+
+A Fiesta exe treats its first s2s connect as a readiness probe: if it
+succeeds, the exe immediately spins up its full parallel connection pool. So
+the proxy must NOT have a listen port open before the real upstream is up — a
+falsely-successful probe makes the exe flood a not-ready peer and wedge in a
+boot loop (a Zone likewise throws *unable to connect to world server* on a
+connect-then-drop).
+
+Every listener (s2s inbound, s2s outbound, client-facing) therefore
+**health-gates**: it probes its upstream first and only calls `listen()` once
+the upstream accepts a connection. Until then the port is closed, so a probe
+gets a retryable *connection refused* — exactly what the exe (or a player's
+client) expects from a server that hasn't booted yet. Per-connection dials are
+then a single attempt (`UPSTREAM_CONNECT_TIMEOUT_SECONDS`, default 10) with no
+holding/retry.
 
 ## Configuration (env)
 
 | var | purpose |
 | --- | --- |
 | `PUBLIC_IP` | Default external address used when no per-service `EXTERNAL_HOST_*` is set. |
-| `PROXY_ROUTES` | `;`-separated list of `listen:service:upstream:port`. Example below. |
+| `PROXY_ROUTES` | `;`-separated list of `listen:service:upstream:port[:mode]`. `mode` is `rewrite` (default) or `opaque`. Example below. |
 | `EXTERNAL_HOST_<service>` | Override the address advertised to clients for `<service>`. |
 | `EXTERNAL_PORT_<service>` | Override the port advertised to clients for `<service>`. |
+| `UPSTREAM_CONNECT_TIMEOUT_SECONDS` | Per-attempt timeout for one upstream TCP connect — used by the listener health-gate probe and per-connection dials. Default `10`. Applies to both `PROXY_ROUTES` and `S2S_ROUTES`. |
 | `XOR_TABLE_HEX` | (BYO) Inline hex string of the C→S XOR cipher table (whitespace / commas / `0x` ok). Optional — proxy still runs without it because no current rewriter reads C→S. Future C→S inspection hooks will throw if absent. |
 | `XOR_TABLE_PATH` | (BYO) Path to a file containing the XOR table as hex text or raw binary. Hex is tried first; falls back to binary if the file isn't ASCII hex. |
 | `S2S_ROUTES` | (S2S mode) `;`-separated list of `bind:port:upstream:port`. Bind `127.0.0.1` = outbound (local exe → peer pod); bind `0.0.0.0` = inbound (peer pod → my exe). No rewriters, no cipher — pure byte passthrough. |
@@ -51,12 +76,13 @@ different tables, and the proxy ships none. See
 `PROXY_ROUTES` example:
 
 ```
-PROXY_ROUTES=9010:Login:login:9010;9015:WorldManager_0:worldmanager:9015;9019:Zone_0_0:zone00:9019
+PROXY_ROUTES=9010:Login:login:9010;9015:WorldManager_0:worldmanager:9015;9019:Zone_0_0:zone00:9019:opaque
 ```
 
 Listen ports are what players connect to. Upstream host is resolved fresh on
 every connection (and every packet rewrite that needs an address) so DNS-based
-scale events propagate without restart.
+scale events propagate without restart. The trailing `:opaque` on the Zone
+route skips frame parsing — see *Traffic model* above.
 
 ## Build
 

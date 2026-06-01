@@ -21,9 +21,17 @@ public sealed class ProxyListener
 
     public async Task RunAsync(CancellationToken ct)
     {
+        // Stay unbound until the upstream exe is reachable -- players get a
+        // clean "connection refused" while the server is still booting
+        // instead of a connect-then-drop. See Upstream.
+        await Upstream.WaitUntilReachableAsync(
+            _route.UpstreamHost, _route.UpstreamPort, _config.UpstreamConnectTimeout,
+            $"[{_route.ServiceName}]", ct);
+        if (ct.IsCancellationRequested) return;
+
         var listener = new TcpListener(IPAddress.Any, _route.ListenPort);
         listener.Start();
-        Log.Info($"listen :{_route.ListenPort} -> {_route.UpstreamHost}:{_route.UpstreamPort} ({_route.ServiceName})");
+        Log.Info($"listen :{_route.ListenPort} -> {_route.UpstreamHost}:{_route.UpstreamPort} ({_route.ServiceName}) -- listening");
 
         try
         {

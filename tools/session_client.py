@@ -190,7 +190,12 @@ AVATAR_SLOT_OFFSET = 26  # PROTO_AVATARINFORMATION.slot @26
 # ---------- phases ----------
 
 def phase_login(host, port, capture_bodies):
-    """Replay Login C->S, return live OTP from [0C0C]."""
+    """Replay Login C->S, return (live OTP from [0C0C], the still-open socket).
+
+    The Login socket is deliberately NOT closed here -- the caller owns it and
+    closes it after the WM phase. A real client holds its Login connection
+    open across world-enter; closing it early lets the login session / OTP
+    expire before WM validates it (seen as WM LOGINWORLDFAIL 0x0044)."""
     print(f"[Login] dial {host}:{port}")
     sock = connect(host, port)
     try:
@@ -213,10 +218,11 @@ def phase_login(host, port, capture_bodies):
                 otp = bytes(pl[OTP_OFFSET_IN_WORLDSELECT_ACK:
                               OTP_OFFSET_IN_WORLDSELECT_ACK + OTP_LEN])
                 print(f"[Login] live OTP first16: {otp[:16].hex()}")
-                return otp
+                return otp, sock
         raise RuntimeError("Login: no [0C0C] in response")
-    finally:
+    except BaseException:
         sock.close()
+        raise
 
 
 def phase_wm(host, port, capture_bodies, live_otp):
@@ -403,40 +409,46 @@ def main():
     print(f"[load] WM: {len(wm_bodies)} C->S frames (capture seed=0x{wm_seed:04X})")
 
     lh, lp = args.proxy_login.rsplit(":", 1)
-    live_otp = phase_login(lh, int(lp), login_bodies)
+    live_otp, login_sock = phase_login(lh, int(lp), login_bodies)
 
-    wh, wp = args.proxy_wm.rsplit(":", 1)
-    zone_ep, wm_sock, wm_cipher, wm_handle = phase_wm(wh, int(wp), wm_bodies, live_otp)
-    if zone_ep is None:
-        wm_sock.close()
-        print("[chain] no [1003] received")
-        return 1
-    print(f"[chain] WM advertised zone (post-proxy-rewrite): {zone_ep[0]}:{zone_ep[1]}")
-
-    zone_c2s, zone_s2c = stream_pair(streams, 9019)
-    zone_seed = first_handshake_seed(zone_s2c)
-    if zone_seed is None:
-        wm_sock.close()
-        raise SystemExit("Zone capture has no handshake")
-    zone_bodies = decrypted_bodies(zone_c2s, zone_seed)
-    print(f"[load] Zone: {len(zone_bodies)} C->S frames (capture seed=0x{zone_seed:04X})")
-
+    # Hold the Login socket open across the WM (and Zone) phases -- a real
+    # client keeps its Login connection up through world-enter, and closing it
+    # early lets the login session / OTP expire before WM validates it.
     try:
-        zh, zp = args.proxy_zone.rsplit(":", 1)
-        ok = phase_zone(zh, int(zp), zone_bodies, wm_handle)
-    finally:
-        # Send NORMALLOGOUT_CMD on WM before closing — matches captured tail.
-        try:
-            send_body(wm_sock, wm_cipher, bytes([0x18, 0x0C, 0x00]), label="WM")
-        except Exception:
-            pass
-        wm_sock.close()
+        wh, wp = args.proxy_wm.rsplit(":", 1)
+        zone_ep, wm_sock, wm_cipher, wm_handle = phase_wm(wh, int(wp), wm_bodies, live_otp)
+        if zone_ep is None:
+            wm_sock.close()
+            print("[chain] no [1003] received")
+            return 1
+        print(f"[chain] WM advertised zone (post-proxy-rewrite): {zone_ep[0]}:{zone_ep[1]}")
 
-    if not ok:
-        print("[chain] Zone did not return [1038] NC_CHAR_CLIENT_BASE_CMD")
-        return 2
-    print("[chain] DONE — Login -> WM -> Zone chain completed")
-    return 0
+        zone_c2s, zone_s2c = stream_pair(streams, 9019)
+        zone_seed = first_handshake_seed(zone_s2c)
+        if zone_seed is None:
+            wm_sock.close()
+            raise SystemExit("Zone capture has no handshake")
+        zone_bodies = decrypted_bodies(zone_c2s, zone_seed)
+        print(f"[load] Zone: {len(zone_bodies)} C->S frames (capture seed=0x{zone_seed:04X})")
+
+        try:
+            zh, zp = args.proxy_zone.rsplit(":", 1)
+            ok = phase_zone(zh, int(zp), zone_bodies, wm_handle)
+        finally:
+            # Send NORMALLOGOUT_CMD on WM before closing — matches captured tail.
+            try:
+                send_body(wm_sock, wm_cipher, bytes([0x18, 0x0C, 0x00]), label="WM")
+            except Exception:
+                pass
+            wm_sock.close()
+
+        if not ok:
+            print("[chain] Zone did not return [1038] NC_CHAR_CLIENT_BASE_CMD")
+            return 2
+        print("[chain] DONE — Login -> WM -> Zone chain completed")
+        return 0
+    finally:
+        login_sock.close()
 
 
 if __name__ == "__main__":

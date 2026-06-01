@@ -7,9 +7,10 @@ Wire framing:
   * The length prefix itself is plaintext; the body is XOR'd when the
     cipher is enabled on that direction.
 
-Cipher (lifted from Ikaron/fiesta-filter):
-  * 515-byte fixed XOR table.
-  * Position is per-direction, wraps mod 515.
+Cipher (same shape as Ikaron/fiesta-filter):
+  * Fixed XOR table, bring-your-own (see load_xor_table below) — this repo
+    ships no table.
+  * Position is per-direction, wraps mod len(table).
   * Server kicks the cipher on by sending a 4-byte plaintext frame
     [length=4][0x07 0x08 posLo posHi] S→C. After that, C→S bytes are
     XOR'd starting at the seed; S→C remains plaintext.
@@ -19,40 +20,90 @@ from __future__ import annotations
 import os
 
 
-def _load_xor_table() -> bytes:
-    """Bring-your-own c2s cipher table. Provide it via env -- it is NOT
-    shipped (game-derived data). Priority:
-      * XOR_TABLE_HEX  -- hex string (whitespace ignored)
-      * XOR_TABLE_PATH -- path to a file of hex
+_XOR_TABLE: bytes | None = None
+
+
+def _parse_hex(s: str) -> bytes | None:
+    """Parse a hex string, tolerating whitespace, commas and 0x prefixes."""
+    out: list[str] = []
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c.isspace() or c == ",":
+            i += 1
+            continue
+        if c == "0" and i + 1 < len(s) and s[i + 1] in "xX":
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    h = "".join(out)
+    if not h or len(h) % 2 != 0:
+        return None
+    try:
+        return bytes.fromhex(h)
+    except ValueError:
+        return None
+
+
+def load_xor_table() -> bytes:
     """
-    hx = os.environ.get("XOR_TABLE_HEX")
-    if not hx:
-        path = os.environ.get("XOR_TABLE_PATH")
-        if path:
-            with open(path, "r", encoding="utf-8") as f:
-                hx = f.read()
-    if not hx:
-        raise SystemExit(
-            "XOR table not configured. Set XOR_TABLE_HEX or XOR_TABLE_PATH "
-            "(the c2s cipher table is bring-your-own; it is not shipped)."
-        )
-    return bytes.fromhex("".join(hx.split()))
+    Load the bring-your-own C->S XOR cipher table. Cached after first call.
 
+    Sources, in priority order (matches the C# XorTableLoader contract):
+      1. XOR_TABLE_HEX  -- inline hex string (whitespace / commas / 0x ok).
+      2. XOR_TABLE_PATH -- file containing hex text, or the raw binary table.
 
-XOR_TABLE = _load_xor_table()
+    This repo ships no table: different server builds may use different
+    tables, and the table is part of the protocol-licensing question this
+    project deliberately takes no stance on. Tools that decrypt C->S
+    traffic require the operator to supply one.
+    """
+    global _XOR_TABLE
+    if _XOR_TABLE is not None:
+        return _XOR_TABLE
+
+    hex_env = os.environ.get("XOR_TABLE_HEX")
+    if hex_env and hex_env.strip():
+        parsed = _parse_hex(hex_env)
+        if parsed is None:
+            raise ValueError("XOR_TABLE_HEX is set but not valid hex")
+        _XOR_TABLE = parsed
+        return _XOR_TABLE
+
+    path = os.environ.get("XOR_TABLE_PATH")
+    if path and path.strip():
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"XOR_TABLE_PATH '{path}' does not exist")
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        # Try hex-as-text first; fall back to treating the file as raw binary.
+        try:
+            parsed = _parse_hex(raw.decode("ascii"))
+        except UnicodeDecodeError:
+            parsed = None
+        _XOR_TABLE = parsed if parsed is not None else raw
+        return _XOR_TABLE
+
+    raise RuntimeError(
+        "No XOR table configured. This tool needs the C->S cipher table; "
+        "supply it via XOR_TABLE_HEX or XOR_TABLE_PATH (bring-your-own -- "
+        "see lib/fiesta-proxy/README.md)."
+    )
 
 
 class XorCipher:
-    __slots__ = ("pos",)
+    __slots__ = ("pos", "_tbl")
 
     def __init__(self, start_pos: int = 0) -> None:
-        self.pos = start_pos % len(XOR_TABLE)
+        self._tbl = load_xor_table()
+        self.pos = start_pos % len(self._tbl)
 
     def transform(self, data: bytes) -> bytes:
-        n = len(XOR_TABLE)
+        tbl = self._tbl
+        n = len(tbl)
         out = bytearray(len(data))
         pos = self.pos
-        tbl = XOR_TABLE
         for i, b in enumerate(data):
             out[i] = b ^ tbl[pos]
             pos += 1

@@ -7,11 +7,12 @@ namespace FiestaProxy.Config;
 /// so the same image can serve every operator topology.
 ///
 /// Wire format (semicolon-delimited list, each entry colon-delimited):
-///   PROXY_ROUTES=9010:Login:login:9010;9015:WorldManager_0:worldmanager:9015;9019:Zone_0_0:zone00:9019
+///   PROXY_ROUTES=9010:Login:login:9010;9015:WorldManager_0:worldmanager:9015;9019:Zone_0_0:zone00:9019:opaque
 ///                 ^^^^ listen port (player-facing)
 ///                      ^^^^^ Fiesta service name (matches start.sh/start.ps1 scheme)
 ///                            ^^^^^ upstream host (docker service name, resolved every connect)
 ///                                 ^^^^ upstream port
+///                                      ^^^^^^ optional mode: "rewrite" (default) or "opaque"
 ///
 /// For each service the proxy looks up EXTERNAL_HOST_&lt;ServiceName&gt; and
 /// EXTERNAL_PORT_&lt;ServiceName&gt; when rewriting outbound packets. Defaults are
@@ -30,6 +31,24 @@ public sealed class ProxyConfig
     /// </summary>
     public required byte[]? XorTable { get; init; }
 
+    /// <summary>
+    /// Per-attempt timeout for a single upstream TCP connect. Used by the
+    /// listener health-gate (which probes the upstream and only opens the
+    /// listen port once it answers) and by per-connection dials. The gate
+    /// loops indefinitely until the peer is up, so this bounds one attempt,
+    /// not the overall wait. Set via UPSTREAM_CONNECT_TIMEOUT_SECONDS (10s).
+    /// </summary>
+    public required TimeSpan UpstreamConnectTimeout { get; init; }
+
+    /// <summary>
+    /// Whether to emit the per-packet log line (opcode + payload hex preview)
+    /// for every frame the proxy forwards in either direction on either route.
+    /// Off by default — the per-packet stream is noisy and only useful when
+    /// you're actively debugging. Connection-level logs (accept/close, gate
+    /// health, listener opens) stay on regardless. Set with PROXY_PACKET_LOG=1.
+    /// </summary>
+    public required bool PacketLogEnabled { get; init; }
+
     public static ProxyConfig FromEnvironment()
     {
         var routesEnv = Environment.GetEnvironmentVariable("PROXY_ROUTES");
@@ -37,16 +56,39 @@ public sealed class ProxyConfig
         if (string.IsNullOrWhiteSpace(routesEnv) && string.IsNullOrWhiteSpace(s2sEnv))
             throw new InvalidOperationException("At least one of PROXY_ROUTES or S2S_ROUTES must be set");
 
-        // PUBLIC_IP is only meaningful for client-facing mode (rewriters use it
-        // as the default external host). Required iff PROXY_ROUTES is set.
+        // The advertised IP (rewritten into client-facing announcement packets
+        // so the client dials the right next hop) is resolved in priority order:
+        //   1. PUBLIC_HOST set  -> DNS-resolve it to an IPv4 at startup. Lets the
+        //      proxy advertise a stable public endpoint by name (e.g. behind a
+        //      TCP ingress / LB) instead of a hardcoded address. Useful when the
+        //      proxy runs as several pods and none of them knows the public IP
+        //      literally.
+        //   2. PUBLIC_IP set    -> use the literal.
+        // Only meaningful for client-facing mode; required iff PROXY_ROUTES set.
+        var publicHost = Environment.GetEnvironmentVariable("PUBLIC_HOST");
         var publicIp = Environment.GetEnvironmentVariable("PUBLIC_IP") ?? "";
+        if (!string.IsNullOrWhiteSpace(publicHost))
+        {
+            var resolved = ResolvePublicHost(publicHost.Trim());
+            if (resolved is not null)
+            {
+                Log.Info($"PUBLIC_HOST '{publicHost.Trim()}' resolved to advertised IP {resolved}");
+                publicIp = resolved;
+            }
+            else if (!string.IsNullOrWhiteSpace(publicIp))
+                Log.Warn($"PUBLIC_HOST '{publicHost.Trim()}' did not resolve — falling back to PUBLIC_IP {publicIp}");
+            else
+                throw new InvalidOperationException($"PUBLIC_HOST '{publicHost.Trim()}' did not resolve to any IPv4 and no PUBLIC_IP fallback is set");
+        }
         if (!string.IsNullOrWhiteSpace(routesEnv) && string.IsNullOrWhiteSpace(publicIp))
-            throw new InvalidOperationException("PUBLIC_IP env var is required when PROXY_ROUTES is set");
+            throw new InvalidOperationException("PUBLIC_IP or a resolvable PUBLIC_HOST is required when PROXY_ROUTES is set");
 
         var routes = ParseRoutes(routesEnv);
         var s2sRoutes = ParseS2sRoutes(s2sEnv);
         var s2sCidrs = ParseS2sCidrs(Environment.GetEnvironmentVariable("S2S_ALLOWED_CIDRS"));
         var xorTable = XorTableLoader.FromEnvironment();
+        var upstreamTimeout = ParseUpstreamTimeout(Environment.GetEnvironmentVariable("UPSTREAM_CONNECT_TIMEOUT_SECONDS"));
+        var packetLog = ParseBoolFlag(Environment.GetEnvironmentVariable("PROXY_PACKET_LOG"));
 
         return new ProxyConfig
         {
@@ -55,7 +97,52 @@ public sealed class ProxyConfig
             S2sAllowedCidrs = s2sCidrs,
             PublicIp = publicIp,
             XorTable = xorTable,
+            UpstreamConnectTimeout = upstreamTimeout,
+            PacketLogEnabled = packetLog,
         };
+    }
+
+    /// <summary>Resolve a hostname to its first IPv4 address, or null on
+    /// failure. Used for PUBLIC_HOST so the advertised endpoint can be given
+    /// by name (resolved once at startup).</summary>
+    private static string? ResolvePublicHost(string host)
+    {
+        // Already an IP literal? Hand it straight back.
+        if (System.Net.IPAddress.TryParse(host, out var literal))
+            return literal.ToString();
+        try
+        {
+            var addrs = System.Net.Dns.GetHostAddresses(host);
+            var v4 = Array.Find(addrs, a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+            if (v4 is not null) return v4.ToString();
+            // No A record; fall back to the first address (e.g. IPv6) if any.
+            return addrs.Length > 0 ? addrs[0].ToString() : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool ParseBoolFlag(string? env)
+    {
+        if (string.IsNullOrWhiteSpace(env)) return false;
+        return env.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            _ => false,
+        };
+    }
+
+    private static TimeSpan ParseUpstreamTimeout(string? env)
+    {
+        // Per-attempt timeout for a single upstream TCP connect -- used by the
+        // listener health-gate probe and per-connection dials. The gate loops
+        // (1s backoff) until the peer is up, so this bounds one attempt only.
+        const int defaultSeconds = 10;
+        if (!string.IsNullOrWhiteSpace(env) && int.TryParse(env, out var s) && s > 0)
+            return TimeSpan.FromSeconds(s);
+        return TimeSpan.FromSeconds(defaultSeconds);
     }
 
     private static List<ProxyRoute> ParseRoutes(string? env)
@@ -65,11 +152,21 @@ public sealed class ProxyConfig
         foreach (var entry in env.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var parts = entry.Split(':');
-            if (parts.Length != 4)
-                throw new InvalidOperationException($"PROXY_ROUTES entry malformed (expect 4 colon-separated fields): '{entry}'");
+            // 4 fields = rewrite route (default); 5th optional field = mode.
+            if (parts.Length is not (4 or 5))
+                throw new InvalidOperationException($"PROXY_ROUTES entry malformed (expect listen:service:upstream:port[:mode]): '{entry}'");
             if (!int.TryParse(parts[0], out var listen) || !int.TryParse(parts[3], out var upstreamPort))
                 throw new InvalidOperationException($"PROXY_ROUTES entry has non-numeric port: '{entry}'");
-            routes.Add(new ProxyRoute(listen, parts[1], parts[2], upstreamPort));
+            var mode = RouteMode.Rewrite;
+            if (parts.Length == 5)
+                mode = parts[4].Trim().ToLowerInvariant() switch
+                {
+                    "opaque" => RouteMode.Opaque,
+                    "rewrite" or "" => RouteMode.Rewrite,
+                    var other => throw new InvalidOperationException(
+                        $"PROXY_ROUTES entry has unknown mode '{other}' (expect 'rewrite' or 'opaque'): '{entry}'"),
+                };
+            routes.Add(new ProxyRoute(listen, parts[1], parts[2], upstreamPort, mode));
         }
         return routes;
     }
@@ -136,7 +233,25 @@ public sealed class ProxyConfig
         => Routes.FirstOrDefault(r => r.ListenPort == listenPort)?.ServiceName;
 }
 
-public sealed record ProxyRoute(int ListenPort, string ServiceName, string UpstreamHost, int UpstreamPort);
+/// <summary>How the proxy treats a client-facing route's traffic.</summary>
+public enum RouteMode
+{
+    /// <summary>Parse S→C frames and run the rewriter registry (Login / WM routes).</summary>
+    Rewrite,
+
+    /// <summary>
+    /// Pure byte passthrough — no framing, no rewriters. For the high-volume
+    /// in-game Zone channel: it carries no address fields the proxy needs to
+    /// patch (the Zone endpoint was already rewritten upstream in the WM
+    /// channel's CHAR_LOGIN_ACK), so parsing every frame is wasted work on
+    /// the noisiest connection in the stack.
+    /// </summary>
+    Opaque,
+}
+
+public sealed record ProxyRoute(
+    int ListenPort, string ServiceName, string UpstreamHost, int UpstreamPort,
+    RouteMode Mode = RouteMode.Rewrite);
 
 /// <summary>
 /// One s2s tunnel. Bind 0.0.0.0:port for inbound (other pods → my pod), bind
