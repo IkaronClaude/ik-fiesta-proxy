@@ -16,10 +16,30 @@ Cipher (lifted from Ikaron/fiesta-filter):
 """
 from __future__ import annotations
 
+import os
 
-XOR_TABLE = bytes([
-    0x00])
-assert len(XOR_TABLE) == 499
+
+def _load_xor_table() -> bytes:
+    """Bring-your-own c2s cipher table. Provide it via env -- it is NOT
+    shipped (game-derived data). Priority:
+      * XOR_TABLE_HEX  -- hex string (whitespace ignored)
+      * XOR_TABLE_PATH -- path to a file of hex
+    """
+    hx = os.environ.get("XOR_TABLE_HEX")
+    if not hx:
+        path = os.environ.get("XOR_TABLE_PATH")
+        if path:
+            with open(path, "r", encoding="utf-8") as f:
+                hx = f.read()
+    if not hx:
+        raise SystemExit(
+            "XOR table not configured. Set XOR_TABLE_HEX or XOR_TABLE_PATH "
+            "(the c2s cipher table is bring-your-own; it is not shipped)."
+        )
+    return bytes.fromhex("".join(hx.split()))
+
+
+XOR_TABLE = _load_xor_table()
 
 
 class XorCipher:
