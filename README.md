@@ -19,12 +19,20 @@ as a submodule) for protocol framing.
 
 ## Why this exists
 
-Fiesta's process model is awkward to network: every service binds *and
-advertises* an address to the client, and the cluster talks to itself on
-`127.0.0.1`. The usual workaround is host networking with fragile port juggling.
-fiesta-proxy removes that constraint — the servers can sit on internal-only
-addresses and never leak them, because the proxy rewrites the announced
-endpoints on the way out and tunnels peer traffic so it always looks local.
+Fiesta's server-to-server links are gated by a **source-IP whitelist** baked into
+config: each service only accepts peers whose IP is listed in its `ServerInfo`.
+That pins every service to a fixed IP/node at config time — move a process to a
+different node, reschedule it, or let it recover from an eviction, and its peers
+reject it until you rewrite the whitelist and redeploy.
+
+The baked-in s2s proxy removes that pin. Every peer is reached through a local
+proxy, so each exe sees its peers as `127.0.0.1` and the whitelist passes *no
+matter where the peer actually runs*; the proxy resolves the real peer fresh per
+connection (via DNS). Services can land on arbitrary nodes, reschedule, or
+recover from runtime evictions with no config change. The client-facing half does
+the mirror trick outward — it rewrites the WM/Zone endpoints the servers advertise
+so external clients always reach one public address while the servers keep
+internal-only addressing.
 
 ## Client-facing rewriters
 
