@@ -1,4 +1,4 @@
-# fiesta-proxy
+# ik-fiesta-proxy
 
 A small, dependency-light TCP proxy for **Fiesta Online** server stacks. It
 does two jobs, either or both at once:
@@ -11,7 +11,7 @@ does two jobs, either or both at once:
    the exe, so Fiesta's source-IP allowlist passes trivially and there's no
    boot-time DNS race. Resolves the real peer fresh per connection.
 
-It's the networking glue behind [**fiesta-docker**](https://github.com/IkaronClaude/fiesta-docker)
+It's the networking glue behind [**fiesta-docker**](https://github.com/IkaronClaude/ik-fiesta-docker)
 (BYO Docker/Kubernetes images for Fiesta servers), but builds and runs
 standalone too. Open source, runs on **Linux and Windows**, written on top of
 [FiestaLib-Reloaded](https://github.com/IkaronClaude/FiestaLib-Reloaded) (vendored
