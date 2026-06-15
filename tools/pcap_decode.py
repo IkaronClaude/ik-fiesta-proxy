@@ -73,11 +73,12 @@ def load_protocol():
 def load_streams(path: str):
     bufs = collections.defaultdict(bytearray)
     seqs: dict[tuple, int] = {}
+    segs: dict[tuple, list] = collections.defaultdict(list)  # key -> [(stream_offset, ts)]
     with open(path, "rb") as f:
         magic = f.read(4)
         f.seek(0)
         rdr = dpkt.pcapng.Reader(f) if magic == b"\x0a\x0d\x0d\x0a" else dpkt.pcap.Reader(f)
-        for _ts, raw in rdr:
+        for ts, raw in rdr:
             try:
                 eth = dpkt.ethernet.Ethernet(raw)
                 ip = eth.data
@@ -98,7 +99,25 @@ def load_streams(path: str):
             if end > len(buf):
                 buf.extend(b"\x00" * (end - len(buf)))
             buf[off:end] = data
-    return {k: bytes(v) for k, v in bufs.items()}
+            segs[key].append((off, ts))
+    streams = {k: bytes(v) for k, v in bufs.items()}
+    seg_index = {k: sorted(v) for k, v in segs.items()}  # offset-sorted for lookup
+    return streams, seg_index
+
+
+def offset_ts(seg_list, off: int) -> float:
+    """Timestamp of the TCP segment that delivered the byte at stream offset `off`
+    (the largest segment start <= off). Used to order frames across both directions."""
+    if not seg_list:
+        return 0.0
+    lo, hi, best = 0, len(seg_list) - 1, seg_list[0][1]
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if seg_list[mid][0] <= off:
+            best = seg_list[mid][1]; lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
 
 
 def pair_conversations(streams: dict):
@@ -252,6 +271,41 @@ def dump_frames(label: str, frames, op_name, name_to_struct,
                 print(f"{indent}    ... +{len(pl) - hex_limit} bytes")
 
 
+def extract_chat(body) -> str:
+    """The longest printable-ASCII run in a chat frame's payload, as a clean line.
+    Robust to the leading link-count/length bytes (and direction differences)."""
+    pl = payload_of(body)
+    best: list[str] = []
+    cur: list[str] = []
+    for b in pl:
+        if 0x20 <= b < 0x7F:
+            cur.append(chr(b))
+        else:
+            if len(cur) > len(best):
+                best = cur
+            cur = []
+    if len(cur) > len(best):
+        best = cur
+    return "".join(best).strip()
+
+
+def dump_one(label, off, body, op_name, name_to_struct, indent, show_hex, hex_limit, show_struct):
+    op = opcode_of(body)
+    pl = payload_of(body)
+    name = op_name.get(op, "<unknown>")
+    print(f"{indent}{label} @{off:5d}  [0x{op:04X}] {name}  payload={len(pl)}b")
+    if show_struct:
+        sd = name_to_struct.get(name)
+        if sd:
+            for line in decode_struct(pl, sd, indent + "  "):
+                print(line)
+    if show_hex and pl:
+        for line in hex_ascii_rows(pl[:hex_limit], indent=indent + "    "):
+            print(line)
+        if len(pl) > hex_limit:
+            print(f"{indent}    ... +{len(pl) - hex_limit} bytes")
+
+
 # ---- main
 
 def main() -> int:
@@ -265,12 +319,16 @@ def main() -> int:
     p.add_argument("--max-frames", type=int, default=200)
     p.add_argument("--opcode", action="append", type=lambda s: int(s, 0),
                    help="filter to one or more opcodes (repeatable)")
+    p.add_argument("--interleave", action="store_true",
+                   help="print C->S and S->C frames in one timestamp-ordered stream")
+    p.add_argument("--chat", action="store_true",
+                   help="print only chat messages (annotations), decoded as their own line, interleaved")
     args = p.parse_args()
 
     op_name, name_to_struct = load_protocol()
     print(f"[meta] {len(op_name)} opcodes, {len(name_to_struct)} structs loaded")
 
-    streams = load_streams(args.pcap)
+    streams, segs = load_streams(args.pcap)
     convos = pair_conversations(streams)
     if args.port:
         convos = [c for c in convos if c[4] in args.port]
@@ -290,43 +348,60 @@ def main() -> int:
         if seed is not None:
             print(f"  seed (from S->C 0x0807 NC_MISC_SEED_ACK): 0x{seed:04X} ({seed})")
 
-        def collect_s2c(buf):
+        s2c_seg = segs.get(s2c_key, []) if s2c_key else []
+        c2s_seg = segs.get(c2s_key, []) if c2s_key else []
+
+        # Collect frames tagged with the timestamp of the segment that delivered them, so
+        # both directions can be merged into one chronological stream. C->S bodies are XOR'd.
+        def collect(buf, seg, decrypt):
             out = []
+            cipher = XorCipher(seed) if (decrypt and seed is not None) else None
             for off, plen, body in parse_frames(buf):
-                if args.opcode and opcode_of(body) not in args.opcode:
+                b = cipher.transform(body) if cipher else body
+                if args.opcode and opcode_of(b) not in args.opcode:
                     continue
-                out.append((off, plen, body))
+                out.append((offset_ts(seg, off), off, plen, b))
                 if len(out) >= args.max_frames:
                     break
             return out
 
-        def collect_c2s(buf, seed):
-            # Length prefix is plaintext on the wire; only frame body is XOR'd.
-            # Cipher state advances continuously over body bytes only.
-            out = []
-            if seed is None:
-                return collect_s2c(buf)
-            cipher = XorCipher(seed)
-            for off, plen, body in parse_frames(buf):
-                dec = cipher.transform(body)
-                if args.opcode and opcode_of(dec) not in args.opcode:
-                    continue
-                out.append((off, plen, dec))
-                if len(out) >= args.max_frames:
-                    break
-            return out
+        s2c_frames = collect(s2c, s2c_seg, False) if s2c else []
+        c2s_frames = collect(c2s, c2s_seg, True) if c2s else []
 
-        s2c_frames = collect_s2c(s2c) if s2c else []
-        c2s_frames = collect_c2s(c2s, seed) if c2s else []
+        # --chat: only chat messages (annotations), decoded as their own line, interleaved.
+        if args.chat:
+            rows = []
+            for ts, off, _pl, b in s2c_frames:
+                if "CHAT" in op_name.get(opcode_of(b), ""):
+                    rows.append((ts, off, "S<-", extract_chat(b)))
+            for ts, off, _pl, b in c2s_frames:
+                if "CHAT" in op_name.get(opcode_of(b), ""):
+                    rows.append((ts, off, "C->", extract_chat(b)))
+            for ts, off, d, txt in sorted(rows):
+                if txt:
+                    print(f"  {d} chat: {txt}")
+            continue
 
+        # --interleave: both directions in one timestamp-ordered stream.
+        if args.interleave:
+            merged = [(ts, "S<-", off, b) for ts, off, _pl, b in s2c_frames] + \
+                     [(ts, "C->", off, b) for ts, off, _pl, b in c2s_frames]
+            merged.sort(key=lambda x: (x[0], x[2]))
+            print(f"  --- interleaved ({len(merged)}) ---")
+            for ts, d, off, b in merged:
+                dump_one(d, off, b, op_name, name_to_struct, indent="    ",
+                         show_hex=not args.no_hex, hex_limit=args.hex_limit, show_struct=not args.no_struct)
+            continue
+
+        # default: S->C block then C->S block (as before)
         if s2c_frames:
             print(f"  --- S->C ({len(s2c_frames)}) ---")
-            dump_frames("S<-", s2c_frames, op_name, name_to_struct,
+            dump_frames("S<-", [(off, plen, b) for _ts, off, plen, b in s2c_frames], op_name, name_to_struct,
                         indent="    ", show_hex=not args.no_hex,
                         hex_limit=args.hex_limit, show_struct=not args.no_struct)
         if c2s_frames:
             print(f"  --- C->S decrypted ({len(c2s_frames)}) ---")
-            dump_frames("C->", c2s_frames, op_name, name_to_struct,
+            dump_frames("C->", [(off, plen, b) for _ts, off, plen, b in c2s_frames], op_name, name_to_struct,
                         indent="    ", show_hex=not args.no_hex,
                         hex_limit=args.hex_limit, show_struct=not args.no_struct)
 
