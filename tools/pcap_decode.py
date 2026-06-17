@@ -41,6 +41,38 @@ PROTO_ROOT = os.path.normpath(os.path.join(
     SCRIPT_DIR, "..", "lib", "FiestaLib-Reloaded", "docs", "extracted", "merged"))
 
 
+# Per-step movement spam (Act dept): the walk/run requests + their own/someone-else broadcasts
+# that flood a busy zone and drown out everything interesting. --hide-movement suppresses ONLY
+# these. Teleports / map-links / warps (NC_MAP_LINK*, NC_SKILL_WARP_CMD, mover ride on/off) are
+# deliberately NOT here — those are meaningful transitions, not spam.
+MOVEMENT_SPAM_OPS = {
+    0x2003,  # NC_ACT_WALK_REQ          (C->S: my walk)
+    0x2004,  # NC_ACT_SOMEONEWALK_CMD   (S->C: someone walks)
+    0x2005,  # NC_ACT_RUN_REQ           (C->S: my run)
+    0x2006,  # NC_ACT_SOMEONERUN_CMD    (S->C: someone runs)
+    0x2017,  # NC_ACT_MOVEWALK_CMD      (my walk, broadcast form)
+    0x2018,  # NC_ACT_SOMEONEMOVEWALK_CMD
+    0x2019,  # NC_ACT_MOVERUN_CMD       (my run, broadcast form)
+    0x201A,  # NC_ACT_SOMEONEMOVERUN_CMD
+}
+
+
+def print_usage_banner() -> None:
+    """Always-on legend so the output is self-explanatory (printed before any frames)."""
+    print("=" * 78)
+    print("pcap_decode - Fiesta packet inspector (cipher-aware, PDB struct decode)")
+    print("-" * 78)
+    print("opcode = (department << 10) | command, shown as 0xNNNN + canonical NC_* name.")
+    print("Directions:  S<- server->client (plaintext)   C-> client->server (XOR-decrypted)")
+    print("  A garbage / '<unknown>' C-> stream means that conversation's 0x0807 handshake")
+    print("  seed wasn't in the capture, so C->S can't be decrypted.")
+    print("Flags: --port P(+)  --opcode 0xNNNN(+)  --no-hex  --no-struct  --hex-limit N")
+    print("       --max-frames N  --interleave  --chat  --hide-movement")
+    print("--hide-movement: drop per-step WALK/RUN spam (my + someone-else's moves);")
+    print("  teleports / map-links / warps are KEPT (not movement spam).")
+    print("=" * 78)
+
+
 # ---- protocol metadata loading
 
 def load_protocol():
@@ -323,10 +355,14 @@ def main() -> int:
                    help="print C->S and S->C frames in one timestamp-ordered stream")
     p.add_argument("--chat", action="store_true",
                    help="print only chat messages (annotations), decoded as their own line, interleaved")
+    p.add_argument("--hide-movement", action="store_true",
+                   help="suppress per-step movement spam (walk/run, own + others); keeps teleports/map-links/warps")
     args = p.parse_args()
 
+    print_usage_banner()
     op_name, name_to_struct = load_protocol()
-    print(f"[meta] {len(op_name)} opcodes, {len(name_to_struct)} structs loaded")
+    print(f"[meta] {len(op_name)} opcodes, {len(name_to_struct)} structs loaded"
+          + ("  | --hide-movement ON" if args.hide_movement else ""))
 
     streams, segs = load_streams(args.pcap)
     convos = pair_conversations(streams)
@@ -353,12 +389,18 @@ def main() -> int:
 
         # Collect frames tagged with the timestamp of the segment that delivered them, so
         # both directions can be merged into one chronological stream. C->S bodies are XOR'd.
+        hidden_moves = [0]  # mutable counter shared across collect() calls (movement spam dropped)
+
         def collect(buf, seg, decrypt):
             out = []
             cipher = XorCipher(seed) if (decrypt and seed is not None) else None
             for off, plen, body in parse_frames(buf):
                 b = cipher.transform(body) if cipher else body
-                if args.opcode and opcode_of(b) not in args.opcode:
+                op = opcode_of(b)
+                if args.hide_movement and op in MOVEMENT_SPAM_OPS:
+                    hidden_moves[0] += 1
+                    continue
+                if args.opcode and op not in args.opcode:
                     continue
                 out.append((offset_ts(seg, off), off, plen, b))
                 if len(out) >= args.max_frames:
@@ -367,6 +409,8 @@ def main() -> int:
 
         s2c_frames = collect(s2c, s2c_seg, False) if s2c else []
         c2s_frames = collect(c2s, c2s_seg, True) if c2s else []
+        if args.hide_movement and hidden_moves[0]:
+            print(f"  [hidden {hidden_moves[0]} movement frames]")
 
         # --chat: only chat messages (annotations), decoded as their own line, interleaved.
         if args.chat:
