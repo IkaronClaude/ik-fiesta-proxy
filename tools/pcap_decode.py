@@ -146,6 +146,13 @@ def load_streams(path: str):
                 seqs[key] = tcp.seq
             off = (tcp.seq - seqs[key]) & 0xFFFFFFFF
             buf = bufs[key]
+            if off > len(buf) + (8 << 20):
+                # a segment far ahead of the stream (a reused port / a stray SYN retry with a fresh ISN)
+                # would zero-fill gigabytes; treat it as a new conversation, not a gap
+                seqs[key] = tcp.seq
+                off = 0
+                buf = bufs[key] = bytearray()
+                segs[key] = []
             end = off + len(data)
             if end > len(buf):
                 buf.extend(b"\x00" * (end - len(buf)))
