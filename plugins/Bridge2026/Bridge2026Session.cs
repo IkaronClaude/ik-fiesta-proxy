@@ -257,9 +257,23 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(lc);
                 return;
 
-            case Op.ClientItem when T.ClientItem2016To2026(payload) is { } ci:
-                ctx.Replace(ci);
+            case Op.ClientItem:
+            {
+                // Translate the RECORDS, not just the header. The 2026 client sizes each record from the
+                // item's attribute class rather than the record's own size byte, so a 2016 box walks at the
+                // wrong stride and only its first item appears.
+                if (_plugin.HasItemClasses)
+                {
+                    var full = ItemAttr.ClientItem2016To2026(payload, _plugin.ClassOf, out var refusal);
+                    if (full is not null) { ctx.Replace(full); return; }
+                    _plugin.Warn($"[{_info.ServiceName}] inventory box {(payload.Length > 1 ? payload[1] : -1)} "
+                                 + $"not translated: {refusal}. Its records will be misread past that point.");
+                }
+                // Header-only fallback: better than nothing for an empty box, and visibly wrong for a full
+                // one, which is preferable to silently mangling it.
+                if (T.ClientItem2016To2026(payload) is { } ci) ctx.Replace(ci);
                 return;
+            }
 
             case Op.ChargedBuff when T.ChargedBuff2016To2026(payload) is { } cbf:
                 ctx.Replace(cbf);
