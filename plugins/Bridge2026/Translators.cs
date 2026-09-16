@@ -86,7 +86,11 @@ internal static class T
     public static byte[]? WorldSelectAck2016To2026(byte[] p, string advertiseIp, byte world)
         => p.Length < 83 ? null : Concat(new[] { p[0] }, Name4(advertiseIp), Slice(p, 17, 83 - 17), new[] { world });
 
-    /// <summary>82 B {user[18], validate[64]} -> 320 B {user Name256Byte, validate[64]}.</summary>
+    /// <summary>
+    /// 82 B {user[18], validate[64]} -> 320 B {user Name256Byte, validate[64]}, the German build's form.
+    /// The US build already sends 320 bytes, so this returns null there and the caller forwards the payload
+    /// unchanged under the 2016 opcode.
+    /// </summary>
     public static byte[]? WmLogin2026To2016(byte[] p)
     {
         if (p.Length != 82) return null;

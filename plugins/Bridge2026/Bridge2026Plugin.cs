@@ -130,6 +130,20 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     public (string Host, ushort Port) EndpointFor(ushort port)
         => (_advertise, (ushort)(port + _portOffset));
 
+    /// <summary>
+    /// The opcode shift last measured on a login connection: +2 for the US build, 0 for the German one.
+    ///
+    /// Only the login connection carries the version key the shift is read from. The world manager and zone
+    /// are separate connections that never see it, so they inherit this. Getting that wrong is not cosmetic:
+    /// those two links carry everything whose width depends on the build, so a zone session that thinks it is
+    /// talking to a German client sends 124-byte character base, 187-byte mob records and an untranslated
+    /// reward inventory, which is the zone-enter crash.
+    ///
+    /// One value per process, not per account. Two clients of different builds at once would get this wrong,
+    /// which is a real limit but not one worth a session-correlation scheme here.
+    /// </summary>
+    public int LastShift { get; set; }
+
     /// <summary>The item's attribute class, or -1 when it is unknown or no table was supplied.</summary>
     public int ClassOf(int itemId)
         => _itemClass is not null && _itemClass.TryGetValue(itemId, out var c) ? c : -1;
@@ -139,6 +153,6 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     /// <summary>False only when an opcode list was supplied and this opcode is not in it.</summary>
     public bool IsKnownTo2016(ushort opcode) => _known2016 is null || _known2016.Contains(opcode);
 
-    internal void Log(string message) => _host?.Info(message);
-    internal void Warn(string message) => _host?.Warn(message);
+    public void Log(string message) => _host?.Info(message);
+    public void Warn(string message) => _host?.Warn(message);
 }
