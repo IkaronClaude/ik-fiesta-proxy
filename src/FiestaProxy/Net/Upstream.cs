@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Sockets;
 
 namespace FiestaProxy.Net;
@@ -35,7 +36,7 @@ internal static class Upstream
             attempt++;
             try
             {
-                using var client = new TcpClient();
+                using var client = NewClientFor(host);
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(attemptTimeout);
                 await client.ConnectAsync(host, port, cts.Token);
@@ -53,6 +54,18 @@ internal static class Upstream
     }
 
     /// <summary>
+    /// A client bound to the address family the host actually is.
+    ///
+    /// The default TcpClient is dual-stack, so an IPv4 literal is dialled as an IPv4-mapped IPv6 address.
+    /// Under Docker Desktop's host networking that does not reach the VM's loopback: a container on the
+    /// host network can reach 127.0.0.1:9010 from busybox but not from a dual-stack .NET socket, while any
+    /// non-loopback address in the same namespace works either way. Dialling an IPv4 literal on an IPv4
+    /// socket fixes it, and changes nothing for a hostname, which still resolves normally.
+    /// </summary>
+    private static TcpClient NewClientFor(string host)
+        => IPAddress.TryParse(host, out var ip) ? new TcpClient(ip.AddressFamily) : new TcpClient();
+
+    /// <summary>
     /// Single upstream dial for one accepted connection. Returns a connected
     /// client, or null on failure — the caller then closes the accepted side,
     /// so the exe sees a normal disconnect and retries at its own pace.
@@ -60,7 +73,7 @@ internal static class Upstream
     public static async Task<TcpClient?> DialAsync(
         string host, int port, TimeSpan timeout, CancellationToken ct)
     {
-        var client = new TcpClient();
+        var client = NewClientFor(host);
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);

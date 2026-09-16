@@ -1,0 +1,70 @@
+# The 2026-client bridge in front of a local 2016 stack, laid out the way the k3s deployment is.
+#
+# In the cluster the proxy sits beside the game services and does two jobs: it rewrites the endpoints the
+# servers advertise so a client always dials one public address, and it fronts each service on its own
+# listen port. This compose does the same against the local docker stack, with one addition: the bridge2026
+# plugin, so an unmodified 2026 client can speak to the 2016 exes.
+#
+#   client ---> :19010 bridge ---> <stack>:9010  Login
+#          ---> :19013 bridge ---> <stack>:9013  WorldManager
+#          ---> :19019 bridge ---> <stack>:9019  Zone
+#
+# PORT_OFFSET is 10000, so every endpoint the servers advertise (9013, 9019) is handed to the client as
+# 19013 / 19019 and comes back through the bridge instead of going direct. ADVERTISE_IP is the address the
+# CLIENT should dial, which is this machine as the client sees it on the LAN.
+#
+# Why published ports and not network_mode host
+# ---------------------------------------------
+# The game stack runs host-mode, so the obvious mirror is host-mode here too, and it works: the bridge
+# reaches the services on 127.0.0.1 and the ports open. But under Docker Desktop a host-mode container's
+# ports only reach Windows on 127.0.0.1, never on the LAN address, so the game client on another machine
+# cannot dial them. Published ports bind every interface, which is what the client needs. The stack is then
+# reached through the Docker gateway rather than loopback. On Linux, where host mode behaves as expected,
+# either arrangement works; this one works on both.
+#
+# Run:
+#   docker compose -f deploy/bridge2026/docker-compose.yml up -d --build
+# Settings live in .env beside this file; see .env.example.
+
+services:
+  bridge2026:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: fiesta-proxy:bridge2026
+    container_name: fiesta-bridge2026
+    restart: unless-stopped
+    ports:
+      # Bound to the LAN address EXPLICITLY, and to loopback as well. Left as a bare "19010:19010" Docker
+      # Desktop reports 0.0.0.0 but forwards only to 127.0.0.1 on Windows, so a client on another machine
+      # gets a timeout. The game client has to reach these the same way it reached the login server.
+      - "${ADVERTISE_IP}:19010:19010"   # Login
+      - "${ADVERTISE_IP}:19013:19013"   # WorldManager
+      - "${ADVERTISE_IP}:19019:19019"   # Zone
+      - "127.0.0.1:19010:19010"
+      - "127.0.0.1:19013:19013"
+      - "127.0.0.1:19019:19019"
+    extra_hosts:
+      # Where the host-mode game stack is, seen from a bridge network.
+      - "stack:host-gateway"
+    environment:
+      # Which services the bridge fronts. "bridge" is the mode that decodes BOTH directions; the plugin
+      # cannot translate what the client sends on a rewrite or opaque route.
+      PROXY_ROUTES: "19010:Login:stack:9010:bridge;19013:WorldManager_0:stack:9013:bridge;19019:Zone_0_0:stack:9019:bridge"
+      PUBLIC_IP: ${ADVERTISE_IP}
+
+      # The client direction is encrypted, so the bridge cannot read it without the table. BYO: the repo
+      # ships none. Mounted read-only below.
+      XOR_TABLE_PATH: /config/xor-table.hex
+
+      FIESTAPROXY_PLUGIN_BRIDGE2026_LOGIN_PORT: "19010"
+      FIESTAPROXY_PLUGIN_BRIDGE2026_ADVERTISE: ${ADVERTISE_IP}
+      FIESTAPROXY_PLUGIN_BRIDGE2026_PORT_OFFSET: "10000"
+      FIESTAPROXY_PLUGIN_BRIDGE2026_CHECKSUMS: /config/zone-checksums.txt
+      FIESTAPROXY_PLUGIN_BRIDGE2026_OPCODES: /config/all-enums.json
+
+      PROXY_PACKET_LOG: ${PACKET_LOG:-0}
+    volumes:
+      - ${XOR_TABLE:?set XOR_TABLE in .env}:/config/xor-table.hex:ro
+      - ./zone-checksums.txt:/config/zone-checksums.txt:ro
+      - ${OPCODES_JSON:?set OPCODES_JSON in .env}:/config/all-enums.json:ro
