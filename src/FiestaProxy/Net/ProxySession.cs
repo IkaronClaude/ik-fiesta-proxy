@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using FiestaLibReloaded.Networking;
 using FiestaProxy.Config;
 using FiestaProxy.Crypto;
+using FiestaProxy.Plugins;
 using FiestaProxy.Rewrites;
 
 namespace FiestaProxy.Net;
@@ -32,18 +33,20 @@ public sealed class ProxySession
     private readonly ProxyRoute _route;
     private readonly ProxyConfig _config;
     private readonly PacketRewriterRegistry _rewriters;
+    private readonly PluginHost _plugins;
 
     /// <summary>Initialised on the first S→C SEED_ACK (0x0807) — used by the
     /// C→S raw pump to decrypt bodies for the log line. Null until then or
     /// when no BYO XOR table was configured.</summary>
     private FiestaXorCipher? _c2sCipher;
 
-    public ProxySession(TcpClient client, ProxyRoute route, ProxyConfig config)
+    public ProxySession(TcpClient client, ProxyRoute route, ProxyConfig config, PluginHost? plugins = null)
     {
         _client = client;
         _route = route;
         _config = config;
         _rewriters = PacketRewriterRegistry.Default(config);
+        _plugins = plugins ?? new PluginHost();
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -75,7 +78,32 @@ public sealed class ProxySession
             var upstreamStream = upstream.GetStream();
             var upstreamEp = $"{_route.UpstreamHost}:{_route.UpstreamPort}";
 
-            if (_route.Mode == RouteMode.Opaque)
+            if (_route.Mode == RouteMode.Bridge)
+            {
+                // Bridge route: both directions decoded, plugins may rewrite either way. The
+                // plugins own the translation; without one this behaves as a framed passthrough.
+                var info = new PluginSessionInfo(
+                    _route.ServiceName, _route.ListenPort, _route.UpstreamHost, _route.UpstreamPort,
+                    clientEp, _client.Client.LocalEndPoint?.ToString() ?? "?");
+                var sessions = _plugins.BeginSessions(info);
+                if (sessions.Count == 0)
+                    Log.Warn($"[{_route.ServiceName}] bridge route with no plugin session: packets pass through unchanged");
+                if (_config.XorTable is null)
+                    Log.Warn($"[{_route.ServiceName}] bridge route without an XOR table: the client direction cannot be decoded");
+                try
+                {
+                    var pump = new BridgePump(clientStream, upstreamStream, _config, _route.ServiceName, sessions);
+                    await pump.RunAsync(sessionCts.Token);
+                }
+                finally
+                {
+                    foreach (var s in sessions)
+                    {
+                        try { s.Dispose(); } catch (Exception ex) { Log.Warn($"[{_route.ServiceName}] plugin dispose threw: {ex.Message}"); }
+                    }
+                }
+            }
+            else if (_route.Mode == RouteMode.Opaque)
             {
                 // Opaque route (in-game Zone channel): no rewriter ever
                 // touches a packet, so both directions use the raw framed
@@ -180,9 +208,9 @@ public sealed class ProxySession
         {
             while (!ct.IsCancellationRequested)
             {
-                var frame = await ReadFiestaFrameAsync(from, ct);
+                var frame = await FiestaFraming.ReadAsync(from, ct);
                 if (frame is null) return;
-                var (wire, bodyOffset, bodyLen) = frame.Value;
+                var (wire, bodyOffset, bodyLen) = (frame.Value.Wire, frame.Value.BodyOffset, frame.Value.BodyLength);
 
                 // Decrypt a COPY of the body just for logging. The wire
                 // buffer stays untouched and is forwarded below as-is.
@@ -218,56 +246,4 @@ public sealed class ProxySession
         catch (ObjectDisposedException) { /* socket force-closed by other pump */ }
     }
 
-    /// <summary>
-    /// Read one complete Fiesta frame from the network. Returns the full wire
-    /// bytes (length prefix + body), the offset where the body starts, and
-    /// the body length. Returns null on EOF or malformed framing.
-    ///
-    /// Framing:
-    ///   * 1-byte inline length (1..255): wire = [len] + body
-    ///   * 3-byte extended    (0x00 + LE u16): wire = [00, lo, hi] + body
-    /// </summary>
-    private static async Task<(byte[] Wire, int BodyOffset, int BodyLen)?> ReadFiestaFrameAsync(NetworkStream s, CancellationToken ct)
-    {
-        var first = new byte[1];
-        if (!await ReadExactlyAsync(s, first.AsMemory(), ct)) return null;
-
-        int bodyLen, prefixLen;
-        byte[] wire;
-        if (first[0] != 0x00)
-        {
-            bodyLen = first[0];
-            prefixLen = 1;
-            wire = new byte[1 + bodyLen];
-            wire[0] = first[0];
-        }
-        else
-        {
-            var ext = new byte[2];
-            if (!await ReadExactlyAsync(s, ext.AsMemory(), ct)) return null;
-            bodyLen = ext[0] | (ext[1] << 8);
-            prefixLen = 3;
-            wire = new byte[3 + bodyLen];
-            wire[0] = 0x00;
-            wire[1] = ext[0];
-            wire[2] = ext[1];
-        }
-        if (bodyLen < 2) return null; // malformed — body must include 2-byte opcode
-        if (!await ReadExactlyAsync(s, wire.AsMemory(prefixLen, bodyLen), ct)) return null;
-        return (wire, prefixLen, bodyLen);
-    }
-
-    private static async Task<bool> ReadExactlyAsync(NetworkStream s, Memory<byte> buf, CancellationToken ct)
-    {
-        var off = 0;
-        while (off < buf.Length)
-        {
-            int n;
-            try { n = await s.ReadAsync(buf.Slice(off), ct); }
-            catch { return false; }
-            if (n <= 0) return false;
-            off += n;
-        }
-        return true;
-    }
 }

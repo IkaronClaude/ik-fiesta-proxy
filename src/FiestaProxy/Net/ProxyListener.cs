@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using FiestaProxy.Config;
+using FiestaProxy.Plugins;
 
 namespace FiestaProxy.Net;
 
@@ -12,11 +13,13 @@ public sealed class ProxyListener
 {
     private readonly ProxyRoute _route;
     private readonly ProxyConfig _config;
+    private readonly PluginHost _plugins;
 
-    public ProxyListener(ProxyRoute route, ProxyConfig config)
+    public ProxyListener(ProxyRoute route, ProxyConfig config, PluginHost? plugins = null)
     {
         _route = route;
         _config = config;
+        _plugins = plugins ?? new PluginHost();
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -52,7 +55,7 @@ public sealed class ProxyListener
     {
         try
         {
-            var session = new ProxySession(client, _route, _config);
+            var session = new ProxySession(client, _route, _config, _plugins);
             await session.RunAsync(ct);
         }
         catch (Exception ex)

@@ -162,6 +162,7 @@ public sealed class ProxyConfig
                 mode = parts[4].Trim().ToLowerInvariant() switch
                 {
                     "opaque" => RouteMode.Opaque,
+                    "bridge" => RouteMode.Bridge,
                     "rewrite" or "" => RouteMode.Rewrite,
                     var other => throw new InvalidOperationException(
                         $"PROXY_ROUTES entry has unknown mode '{other}' (expect 'rewrite' or 'opaque'): '{entry}'"),
@@ -247,6 +248,14 @@ public enum RouteMode
     /// the noisiest connection in the stack.
     /// </summary>
     Opaque,
+
+    /// <summary>
+    /// Both directions framed, decoded and re-emitted, with plugins allowed to rewrite, drop or
+    /// answer packets. The only mode in which C->S is decrypted and re-encrypted rather than passed
+    /// through byte-perfect, so it is also the only mode that can change what the server sees.
+    /// Needs a BYO XOR table; without one the client direction cannot be read.
+    /// </summary>
+    Bridge,
 }
 
 public sealed record ProxyRoute(

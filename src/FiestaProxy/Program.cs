@@ -1,5 +1,6 @@
 using FiestaProxy.Config;
 using FiestaProxy.Net;
+using FiestaProxy.Plugins;
 
 namespace FiestaProxy;
 
@@ -29,12 +30,18 @@ internal static class Program
             Log.Info($"  inbound allow CIDRs: {string.Join(", ", config.S2sAllowedCidrs)}");
         }
 
+        var plugins = PluginHost.Load(config);
+        if (plugins.Any)
+            Log.Info($"Plugins: {string.Join(", ", plugins.Plugins.Select(p => p.Name))}");
+        else if (config.Routes.Any(r => r.Mode == RouteMode.Bridge))
+            Log.Warn($"A bridge route is configured but no plugin loaded from {PluginHost.DefaultDirectory}");
+
         var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
         var tasks = new List<Task>();
         foreach (var r in config.Routes)
-            tasks.Add(new ProxyListener(r, config).RunAsync(cts.Token));
+            tasks.Add(new ProxyListener(r, config, plugins).RunAsync(cts.Token));
         foreach (var r in config.S2sRoutes)
             tasks.Add(new S2sListener(r, config.S2sAllowedCidrs, config.UpstreamConnectTimeout).RunAsync(cts.Token));
 
