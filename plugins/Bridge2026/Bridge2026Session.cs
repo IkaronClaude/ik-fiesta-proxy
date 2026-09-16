@@ -103,11 +103,27 @@ internal sealed class Bridge2026Session : IPluginSession
         // No crash, no assert, and the login burst continued. So dropping loses nothing a padded
         // frame would have gained.
         //
-        // What is left open is what the 2026 client MEANS by 0x441F. 2016 department 17 defines
-        // commands up to 32 and nothing above, and the 2026 build renumbers departments (USER shifts
-        // +2 from cmd 0x2c), so this is most likely a collision: some 2026 client request whose number
-        // lands on a 2016 zone-to-zone opcode. Naming it needs the 2026 PDB or a client-side trace;
-        // until then dropping is correct rather than merely safe.
+        // AND THERE IS NO 2016 OPCODE TO REWRITE IT TO, which the captures settle rather than argue.
+        // Comparing the client->server quest opcodes of a 2016 quest flow against the 2026 one, the
+        // exchange lines up like this:
+        //
+        //     2016 (JCQ.pcapng)            2026 (OfficialUS2.pcapng)
+        //     S->C 4401 QSC command 06     S->C 4401 QSC command 06
+        //     (nothing from the client)    C->S 441F {questid}
+        //     S->C 4401 QSC command 0a     S->C 4420 LINK_FAIL, or 4401 QSC command 0a
+        //
+        // In 2016 the server goes 06 -> rewards (CENCHANGE, EXPGAIN, FAMEGAIN) -> 0a with NO client
+        // frame in between, because it runs the ring search itself. 2026 made the client ask for it.
+        // Dropping therefore reproduces the 2016 exchange exactly, and the server's own 0a still
+        // reaches the client.
+        //
+        // Nor is it an opcode collision: 0x4420 NC_QUEST_JOBDUNGEON_LINK_FAIL_CMD is a 2016-defined
+        // opcode and the 2026 server sends it under that same number, so department 17 is not
+        // renumbered. 0x441F means job-dungeon-find on both wires; 2026 only changed who sends it.
+        //
+        // Worth knowing: 13 of the 15 441F exchanges in that capture end in LINK_FAIL (errors 0x30b0,
+        // 0x30b4, 0x30b5) against the OFFICIAL server, so the 2026 client copes with this going
+        // nowhere - which is the same thing it sees from us.
         if (p.Opcode == Op.QuestJobDungeonFindRng && payload.Length != Op.QuestJobDungeonFindRng2016Size)
         {
             ctx.Drop();
