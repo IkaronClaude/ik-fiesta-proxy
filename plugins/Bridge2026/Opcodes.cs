@@ -68,6 +68,10 @@ internal static class Op
     public const ushort LoginCharacter = 0x1c06;
     public const ushort CharacterList = 0x1c07;
     public const ushort RegenMover = 0x1c1a;
+    /// <summary>NC_QUEST_JOBDUNGEON_FIND_RNG: 2 bytes from the 2026 client, 115 in the 2016 build.</summary>
+    public const ushort QuestJobDungeonFindRng = 0x441f;
+    public const int QuestJobDungeonFindRng2016Size = 115;
+
     public const ushort SwingDamage = 0x2448;
     public const ushort SkillHitDamage = 0x2452;
     public const ushort TargetInfo = 0x2402;

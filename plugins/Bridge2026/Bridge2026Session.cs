@@ -73,6 +73,44 @@ internal sealed class Bridge2026Session : IPluginSession
             _plugin.Log($"[{_info.ServiceName}] version opcode 0x{p.Opcode:X4}, {(_shift == 0 ? "German" : "US")} numbering ({_shift:+0;-0;0})");
         }
 
+        // NC_QUEST_JOBDUNGEON_FIND_RNG. The 2026 client answers a quest-script command 06 with TWO bytes -
+        // the quest id - where PROTO_NC_QUEST_JOBDUNGEON_FIND_RNG is 115 bytes in the 2016 build
+        // (ZONERINGLINKAGESTART, nError, three char[33] map/script names, then a QUEST_SCRIPT_CMD_ACK).
+        // Relaying the short one makes the zone read 113 bytes it does not have and drop the connection:
+        // that is the disconnect while clicking through TevaL's dialogue on 2026-09-16.
+        //
+        // The two bytes are nQuestID: 0xFECF = 65231 ("World at War") on ours, 0x03BB = 955 in
+        // OfficialUS2.pcapng, both real quests in the respective QuestData. They answer a
+        // NC_QUEST_SCRIPT_CMD_REQ whose QSC Command byte is 06; an ordinary dialogue page carries 02 and is
+        // answered with NC_QUEST_SCRIPT_CMD_ACK instead. That capture shows the same 06 -> 441F exchange
+        // against the real 2026 server with the conversation carrying on afterwards, so the client is
+        // correct and the 2016 zone is the side that cannot read what it sends.
+        //
+        // QSC 06 is a zone RING LINKAGE - the 2016 struct is ClientMapName, ServerMapName and ScriptName -
+        // so the script is asking for a map or instance transition. In 2016 the CLIENT resolves it and
+        // sends the names back; in 2026 the SERVER resolves it and the client only acknowledges.
+        //
+        // The 06 command's own Data is NOT where the names come from: dumped in full it is uninitialised
+        // memory, pointer-shaped and different between two frames of the same command. The 2016 client
+        // builds the reply out of data it holds LOCALLY - so this is emulatable here rather than
+        // impossible, most likely from QuestData.shn (the quest's ScriptName and its Action block, which is
+        // where "move the player to this map / start this instance" lives). The bridge already loads item
+        // classes, checksums and the opcode list from files, so giving it QuestData fits.
+        // What is still missing is which quest field supplies which name, and what belongs in
+        // ZONERINGLINKAGESTART and nError - a 2016 capture of a job-dungeon quest would settle both.
+        //
+        // THIS IS A GAP, NOT A FIX. Dropping stops the disconnect and loses whatever the reply conveys; a
+        // real translation needs a 2016 capture of a job-dungeon quest to model the payload from (none of
+        // Full/JCQ/GateTest contains a 441F). Tracked as a P0 in the repo's tickets.md.
+        if (p.Opcode == Op.QuestJobDungeonFindRng && payload.Length != Op.QuestJobDungeonFindRng2016Size)
+        {
+            ctx.Drop();
+            _plugin.Warn($"[{_info.ServiceName}] dropped NC_QUEST_JOBDUNGEON_FIND_RNG: {payload.Length} B, "
+                         + $"the 2016 build reads {Op.QuestJobDungeonFindRng2016Size}. Relaying it disconnects "
+                         + "the player; the quest dialogue will end instead of continuing.");
+            return;
+        }
+
         if (p.Opcode == U(Op.C26Version))
         {
             ctx.Drop();
