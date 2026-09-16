@@ -1,3 +1,4 @@
+using System.Text;
 using Bridge2026;
 using Shouldly;
 using Xunit;
@@ -387,6 +388,60 @@ public class TranslatorTests
     [Fact]
     public void A_character_list_whose_count_does_not_match_its_length_is_refused()
         => T.CharacterList2016To2026(Concat(new byte[] { 2 }, new byte[235]), 0).ShouldBeNull();
+
+    // ---------------------------------------------------------------- character base
+
+    [Fact]
+    public void Client_base_lands_every_field_where_the_us_capture_has_it()
+    {
+        // PROTO_NC_CHAR_BASE_CMD as the 2016 server sends it, filled with the values OfficialUS2.pcapng's
+        // login frame carries, so the assertions below are that capture read back.
+        var p = new byte[105];
+        BitConverter.GetBytes(0x00e18092u).CopyTo(p, 0);      // chrregnum
+        Encoding.ASCII.GetBytes("_Anna").CopyTo(p, 4);        // charid
+        p[24] = 0;                                            // slotno
+        p[25] = 2;                                            // Level
+        BitConverter.GetBytes(17UL).CopyTo(p, 26);            // Experience
+        BitConverter.GetBytes((ushort)11).CopyTo(p, 38);      // CurHPStone
+        BitConverter.GetBytes((ushort)14).CopyTo(p, 40);      // CurSPStone
+        BitConverter.GetBytes(53u).CopyTo(p, 42);             // CurHP
+        BitConverter.GetBytes(89u).CopyTo(p, 46);             // CurSP
+        BitConverter.GetBytes(0u).CopyTo(p, 50);              // CurLP
+        BitConverter.GetBytes(2u).CopyTo(p, 54);              // fame
+        BitConverter.GetBytes(104UL).CopyTo(p, 58);           // Cen - the money on screen
+        Encoding.ASCII.GetBytes("Rou").CopyTo(p, 66);         // logininfo.mapname
+        BitConverter.GetBytes(4913u).CopyTo(p, 78);           // x
+        BitConverter.GetBytes(5976u).CopyTo(p, 82);           // y
+
+        var outp = T.ClientBase2016To2026(p, T.ClientBaseUs)!;
+
+        outp.Length.ShouldBe(362);
+        BitConverter.ToUInt32(outp, 0).ShouldBe(0x00e18092u);
+        Encoding.ASCII.GetString(outp, 4, 5).ShouldBe("_Anna");
+        outp[25].ShouldBe((byte)2);                            // Level, still at 25
+        BitConverter.ToUInt64(outp, 26).ShouldBe(17UL);
+        BitConverter.ToUInt32(outp, 42).ShouldBe(53u);
+        BitConverter.ToUInt32(outp, 46).ShouldBe(89u);
+        BitConverter.ToUInt32(outp, 55).ShouldBe(2u);          // fame, one later
+        BitConverter.ToUInt64(outp, 59).ShouldBe(104UL);       // Cen: the whole 64 bits, one later
+        Encoding.ASCII.GetString(outp, 67, 3).ShouldBe("Rou");
+        BitConverter.ToUInt32(outp, 79).ShouldBe(4913u);
+        BitConverter.ToUInt32(outp, 83).ShouldBe(5976u);
+    }
+
+    [Fact]
+    public void Client_base_keeps_money_that_does_not_fit_in_32_bits()
+    {
+        // The field is a u64 and a capped character holds more than 4 billion cen; the old translation
+        // copied four of its eight bytes.
+        var p = new byte[105];
+        BitConverter.GetBytes(9_000_000_000UL).CopyTo(p, 58);
+        BitConverter.ToUInt64(T.ClientBase2016To2026(p, T.ClientBaseUs)!, 59).ShouldBe(9_000_000_000UL);
+    }
+
+    [Fact]
+    public void Client_base_refuses_a_payload_that_is_not_the_2016_struct()
+        => T.ClientBase2016To2026(new byte[104], T.ClientBaseUs).ShouldBeNull();
 
     // ---------------------------------------------------------------- helpers
 
