@@ -276,6 +276,114 @@ internal static class T
         return outp;
     }
 
+    // ------------------------------------------------------------------ combat
+
+    /// <summary>
+    /// The four SKILLBASH *_START frames, each the 2016 struct plus a trailing u32:
+    /// HIT_OBJ_START 6 -> 10, HIT_FLD_START 12 -> 16, SOMEONE_HIT_OBJ_START 8 -> 12,
+    /// SOMEONE_HIT_FLD_START 14 -> 18 (measured on both 2026 captures).
+    ///
+    /// The field's meaning is unmeasured - the instance captures carry 1, 13, 20 and 3 - but a single hit
+    /// carries 1, which is what we send. It is not cosmetic: the 2026 client reads the cast bookkeeping out
+    /// of a 10-byte frame, so a 6-byte one leaves the cast it opened never closed and every later cast is
+    /// refused with "Cannot use the skill yet" even though the cooldown display has run out.
+    /// </summary>
+    public static byte[]? HitStart2016To2026(byte[] p, int size2016)
+        => p.Length != size2016 ? null : Concat(p, BitConverter.GetBytes(1));
+
+    /// <summary>DOTDAMAGE and SOMEONESWING_DAMAGE, both 13 -> 20: the 2016 layout then 7 zero bytes.</summary>
+    public static byte[]? Tail7_2016To2026(byte[] p, int size2016)
+        => p.Length != size2016 ? null : Concat(p, new byte[7]);
+
+    /// <summary>
+    /// NC_BAT_SKILLBASH_HIT_DAMAGE: {index u16, caster u16, n u8} + n x 14 B
+    /// -> the same head, then a skill id u16 and 0xFFFF, then n x 21 B (each record plus 7 zero bytes).
+    ///
+    /// The two inserted head bytes are left zero: the client already knows which skill it cast from the
+    /// index, which pairs this frame back to the *_START that opened it.
+    /// </summary>
+    public static byte[]? SkillHit2016To2026(byte[] p)
+    {
+        if (p.Length < 5) return null;
+        int n = p[4];
+        if (p.Length != 5 + 14 * n) return null;
+
+        var outp = new byte[9 + 21 * n];
+        Array.Copy(p, 0, outp, 0, 5);
+        outp[7] = 0xFF; outp[8] = 0xFF;
+        for (var i = 0; i < n; i++) Array.Copy(p, 5 + 14 * i, outp, 9 + 21 * i, 14);
+        return outp;
+    }
+
+    // ------------------------------------------------------------------ quests, shops, character list
+
+    /// <summary>
+    /// PLAYER_QUEST_INFO 32 B -> 37 B: the five End_NPCMobCount bytes at 24 are u16 on the 2026 wire.
+    /// Everything around them is unchanged - id, status, StartTime, EndTime, RepeatCount, ProgressStep
+    /// before, the flags byte and End_RunningTimeSec after.
+    /// </summary>
+    private static void QuestEntry2016To2026(byte[] src, int at, byte[] dst, int to)
+    {
+        Array.Copy(src, at, dst, to, 24);
+        for (var i = 0; i < 5; i++) dst[to + 24 + i * 2] = src[at + 24 + i];
+        Array.Copy(src, at + 29, dst, to + 34, 3);
+    }
+
+    /// <summary>CLIENT_QUEST_DOING {chrregnum u32, flag u8, count u8} + entries.</summary>
+    public static byte[]? QuestDoing2016To2026(byte[] p)
+        => p.Length < 6 ? null : QuestList(p, p[5]);
+
+    /// <summary>CLIENT_QUEST_REPEAT {chrregnum u32, count u16} + entries.</summary>
+    public static byte[]? QuestRepeat2016To2026(byte[] p)
+        => p.Length < 6 ? null : QuestList(p, BinaryPrimitives.ReadUInt16LittleEndian(p.AsSpan(4)));
+
+    /// <summary>Both quest lists carry a 6-byte head and then the same entries.</summary>
+    private static byte[]? QuestList(byte[] p, int n)
+    {
+        if (p.Length != 6 + 32 * n) return null;
+        var outp = new byte[6 + 37 * n];
+        Array.Copy(p, 0, outp, 0, 6);
+        for (var i = 0; i < n; i++) QuestEntry2016To2026(p, 6 + 32 * i, outp, 6 + 37 * i);
+        return outp;
+    }
+
+    /// <summary>
+    /// NC_MENU_SHOPOPEN* and their TABLE forms: {itemnum u16, npc u16} then one record per item.
+    /// A 2016 record is {slot u8, itemid u16}; a 2026 one widens the slot to u32.
+    /// </summary>
+    public static byte[]? ShopTable2016To2026(byte[] p)
+    {
+        if (p.Length < 4) return null;
+        int n = BinaryPrimitives.ReadUInt16LittleEndian(p);
+        if (p.Length != 4 + 3 * n) return null;
+
+        var outp = new byte[4 + 6 * n];
+        Array.Copy(p, 0, outp, 0, 4);
+        for (var i = 0; i < n; i++)
+        {
+            outp[4 + 6 * i] = p[4 + 3 * i];                       // slot, zero-extended to u32
+            outp[4 + 6 * i + 4] = p[5 + 3 * i];
+            outp[4 + 6 * i + 5] = p[6 + 3 * i];                   // item id
+        }
+        return outp;
+    }
+
+    /// <summary>NC_BRIEFINFO_CHARACTER_CMD: {count u8} then that many LOGINCHARACTER records.</summary>
+    public static byte[]? CharacterList2016To2026(byte[] p, int usExtra)
+    {
+        if (p.Length < 1) return null;
+        int n = p[0];
+        if (p.Length != 1 + 235 * n) return null;
+
+        var rows = new byte[n][];
+        for (var i = 0; i < n; i++)
+        {
+            rows[i] = LoginCharacter2016To2026(Slice(p, 1 + 235 * i, 235), usExtra)!;
+            if (rows[i] is null) return null;
+        }
+        return Concat(new[] { new byte[] { (byte)n } }.Concat(rows).ToArray());
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /// <summary>A dotted-quad as the 16-byte zero-padded ASCII field the protocol uses for addresses.</summary>

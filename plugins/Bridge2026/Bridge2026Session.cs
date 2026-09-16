@@ -308,6 +308,43 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(sw);
                 return;
 
+            // ---- combat. Every one of these is a size change the 2026 client reads state out of; a frame
+            // that goes through at its 2016 width leaves the client's cast bookkeeping stuck.
+            case Op.HitObjStart or Op.HitFldStart or Op.SomeoneHitObjStart or Op.SomeoneHitFldStart:
+            {
+                var size = p.Opcode switch
+                {
+                    Op.HitObjStart => 6,
+                    Op.HitFldStart => 12,
+                    Op.SomeoneHitObjStart => 8,
+                    _ => 14,
+                };
+                if (T.HitStart2016To2026(payload, size) is { } h) ctx.Replace(h);
+                else _plugin.Warn($"[{_info.ServiceName}] cast-start 0x{p.Opcode:X4} is {payload.Length} B, "
+                                  + $"expected {size}; relayed unchanged, which bricks the next cast.");
+                return;
+            }
+
+            case Op.SkillHitDamage when T.SkillHit2016To2026(payload) is { } sh:
+                ctx.Replace(sh);
+                return;
+
+            case Op.DotDamage or Op.SomeoneSwing:
+                if (T.Tail7_2016To2026(payload, 13) is { } t7) ctx.Replace(t7);
+                return;
+
+            case Op.QuestDoing when T.QuestDoing2016To2026(payload) is { } qd:
+                ctx.Replace(qd);
+                return;
+
+            case Op.QuestRepeat when T.QuestRepeat2016To2026(payload) is { } qr:
+                ctx.Replace(qr);
+                return;
+
+            case Op.CharacterList when T.CharacterList2016To2026(payload, UsExtra) is { } cl:
+                ctx.Replace(cl);
+                return;
+
             case Op.TargetInfo when T.TargetInfo2016To2026(payload) is { } ti:
                 ctx.Replace(ti);
                 return;
@@ -335,6 +372,10 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(patched);
                 return;
             }
+
+            case var op when Array.IndexOf(Op.ShopTables, op) >= 0 && T.ShopTable2016To2026(payload) is { } st:
+                ctx.Replace(st);
+                return;
 
             case Op.MapLoginFail:
                 _plugin.Warn($"[{_info.ServiceName}] MAP_LOGINFAIL_ACK {Convert.ToHexString(payload)}");
