@@ -86,28 +86,30 @@ internal sealed class Bridge2026Session : IPluginSession
         // against the real 2026 server with the conversation carrying on afterwards, so the client is
         // correct and the 2016 zone is the side that cannot read what it sends.
         //
-        // QSC 06 is a zone RING LINKAGE - the 2016 struct is ClientMapName, ServerMapName and ScriptName -
-        // so the script is asking for a map or instance transition. In 2016 the CLIENT resolves it and
-        // sends the names back; in 2026 the SERVER resolves it and the client only acknowledges.
+        // MEASURED 2026-09-16, and it settles this: on the 2016 wire QSC command 06 is FIRE AND
+        // FORGET. Across JCQ.pcapng and Full.pcapng - six command-06 frames between them, including
+        // the job-change quest that is the whole reason this opcode exists - the 2016 client answers
+        // it with NOTHING. The server sends 06 and carries straight on by itself: CENCHANGE, EXPGAIN,
+        // FAMEGAIN, then the next command. The frames the client does send next are ordinary gameplay
+        // (NPC clicks, movement, chat), and no 441F appears in any 2016 capture we hold.
         //
-        // The 06 command's own Data is NOT where the names come from: dumped in full it is uninitialised
-        // memory, pointer-shaped and different between two frames of the same command. The 2016 client
-        // builds the reply out of data it holds LOCALLY - so this is emulatable here rather than
-        // impossible, most likely from QuestData.shn (the quest's ScriptName and its Action block, which is
-        // where "move the player to this map / start this instance" lives). The bridge already loads item
-        // classes, checksums and the opcode list from files, so giving it QuestData fits.
-        // What is still missing is which quest field supplies which name, and what belongs in
-        // ZONERINGLINKAGESTART and nError - a 2016 capture of a job-dungeon quest would settle both.
+        // So the 2016 zone has no handler waiting on this reply, and DROPPING IT IS THE TRANSLATION,
+        // not a hole in one. It reproduces exactly what the 2016 wire does with command 06: nothing.
+        // The 2026 client answering 06 at all is the behaviour that changed, on the client side.
         //
-        // THIS IS A GAP, NOT A FIX. Dropping stops the disconnect and loses whatever the reply conveys; a
-        // real translation needs a 2016 capture of a job-dungeon quest to model the payload from (none of
-        // Full/JCQ/GateTest contains a 441F). Tracked as a P0 in the repo's tickets.md.
+        // The earlier note here said the 2016 client "resolves it and sends the names back", and that
+        // this needed a job-dungeon capture to model. That was read off the 2016 struct's shape
+        // (ClientMapName, ServerMapName, ScriptName) rather than off a wire, and the wire disagrees.
+        // PROTO_NC_QUEST_JOBDUNGEON_FIND_RNG does exist in the 2016 PDB, so some flow may still use
+        // it - but it is not this one, and if such a flow turns up it will announce itself as a
+        // different symptom than a dialogue that ends early.
         if (p.Opcode == Op.QuestJobDungeonFindRng && payload.Length != Op.QuestJobDungeonFindRng2016Size)
         {
             ctx.Drop();
-            _plugin.Warn($"[{_info.ServiceName}] dropped NC_QUEST_JOBDUNGEON_FIND_RNG: {payload.Length} B, "
-                         + $"the 2016 build reads {Op.QuestJobDungeonFindRng2016Size}. Relaying it disconnects "
-                         + "the player; the quest dialogue will end instead of continuing.");
+            _plugin.Log($"[{_info.ServiceName}] dropped NC_QUEST_JOBDUNGEON_FIND_RNG ({payload.Length} B; "
+                         + $"the 2016 build reads {Op.QuestJobDungeonFindRng2016Size}). This is what the 2016 "
+                         + "wire does with QSC command 06 - it is answered by nothing - so the conversation "
+                         + "continues normally. Relaying it would disconnect the player.");
             return;
         }
 
