@@ -24,7 +24,20 @@ Copy-Item "$root/plugins/Bridge2026/bin/Release/net10.0/Bridge2026.dll" (Join-Pa
 # Listener ports are the server's plus PORT_OFFSET, so the client's own world-select reply points back here.
 # listen:service:upstream:port:mode, semicolon separated. Bridge mode decodes BOTH directions, which the
 # plugin needs: a rewrite route only ever sees the server side.
-$env:PROXY_ROUTES  = "19010:Login:${Server}:9010:bridge;19013:WorldManager_0:${Server}:9013:bridge;19019:Zone_0_0:${Server}:9019:bridge"
+#
+# EVERY zone needs a route, not just the one the character logs into. A map transition sends
+# NC_MAP_LINKOTHER_CMD naming the destination zone's address, the client closes its current connection and
+# dials that one; with no listener in front of it there is nothing to dial and the client sits at 0% for
+# ever, Not Responding. TevaL is on zone 4 (port 9028) and hung exactly there.
+# Ports are PG_W00_Z<nn> in ServerInfo.txt: zone 0 = 9016, 1 = 9019, 2 = 9022, 3 = 9025, 4 = 9028, and the
+# listener is that plus PORT_OFFSET so the address handed back to the client points at this proxy.
+$env:PROXY_ROUTES  = ("19010:Login:${Server}:9010:bridge;" +
+                      "19013:WorldManager_0:${Server}:9013:bridge;" +
+                      "19016:Zone_0_0:${Server}:9016:bridge;" +
+                      "19019:Zone_0_1:${Server}:9019:bridge;" +
+                      "19022:Zone_0_2:${Server}:9022:bridge;" +
+                      "19025:Zone_0_3:${Server}:9025:bridge;" +
+                      "19028:Zone_0_4:${Server}:9028:bridge")
 $env:PUBLIC_IP     = $Advertise
 $env:XOR_TABLE_PATH = "C:/Projects/ik-fiesta-bots/xor-table.hex"
 $env:PROXY_PACKET_LOG = if ($PacketLog) { "1" } else { "0" }
