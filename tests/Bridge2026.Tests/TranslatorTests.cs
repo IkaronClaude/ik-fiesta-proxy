@@ -211,6 +211,16 @@ public class TranslatorTests
     }
 
     [Fact]
+    public void Wm_login_refuses_the_us_form_so_the_caller_forwards_it_unchanged()
+    {
+        // The German build sends 82 bytes and needs widening; the US build already sends the 320-byte 2016
+        // shape. Returning null there is the signal to forward the payload as-is under the 2016 OPCODE,
+        // which still has to change from 0x0c0e to 0x0c0f or the world manager hangs up.
+        T.WmLogin2026To2016(new byte[320]).ShouldBeNull();
+        T.WmLogin2026To2016(new byte[82])!.Length.ShouldBe(320);
+    }
+
+    [Fact]
     public void Client_item_count_widens_to_u32_and_records_start_at_six()
     {
         // The US head is `28 00 00 00 09 01`, and its empty frame is 6 bytes.

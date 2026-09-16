@@ -39,9 +39,23 @@ internal sealed class Bridge2026Session : IPluginSession
         _plugin = plugin;
         _info = info;
         _isLoginStage = info.ListenPort == plugin.LoginPort;
+        // A login connection measures the numbering for itself off the version key; every other connection
+        // inherits what the last login measured, because it never sees that frame.
+        if (!_isLoginStage)
+        {
+            _shift = plugin.LastShift;
+            if (_shift == 0)
+                plugin.Warn($"[{info.ServiceName}] no login has measured the client build yet, so this link "
+                            + "assumes the German one. Every width that differs between the builds will be "
+                            + "wrong here, which for a US client means a crash on zone enter.");
+        }
     }
 
-    private int UsExtra => _shift != 0 ? 1 : 0;
+    /// <summary>True for the US 10.6.4 build, whose structs are wider than the German build's.</summary>
+    private bool IsUsBuild => _shift != 0;
+
+    /// <summary>The extra byte every US briefinfo record carries.</summary>
+    private int UsExtra => IsUsBuild ? 1 : 0;
     private ushort U(ushort op) => Op.U(op, _shift);
 
     public void OnClientPacket(PluginPacketContext ctx)
@@ -55,6 +69,7 @@ internal sealed class Bridge2026Session : IPluginSession
         {
             _shift = p.Opcode - Op.C26Version;
             _shiftKnown = true;
+            _plugin.LastShift = _shift;        // the WM and zone connections read this
             _plugin.Log($"[{_info.ServiceName}] version opcode 0x{p.Opcode:X4}, {(_shift == 0 ? "German" : "US")} numbering ({_shift:+0;-0;0})");
         }
 
@@ -126,8 +141,14 @@ internal sealed class Bridge2026Session : IPluginSession
 
         if (p.Opcode == U(Op.C26WmLogin) && !_isLoginStage)
         {
-            var wm = T.WmLogin2026To2016(payload);
-            if (wm is not null) { ctx.Drop(); ctx.ToServer(Op.WmLogin16, wm); }
+            // The OPCODE always has to change: 2026 sends the world-manager login as 0x0c0e and the 2016
+            // server accepts it only as 0x0c0f. The PAYLOAD only changes for the German build, which sends
+            // 82 bytes; the US build already sends the 320-byte 2016 shape (measured: 82 in
+            // Official1.pcapng, 320 in both US captures). So a refused translation means "already the right
+            // shape", not "leave the packet alone" - relaying it under the 2026 opcode makes the world
+            // manager hang up, which reaches the player as "Disconnected from World server".
+            ctx.Drop();
+            ctx.ToServer(Op.WmLogin16, T.WmLogin2026To2016(payload) ?? payload);
             return;
         }
 
@@ -237,7 +258,7 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(cs);
                 return;
 
-            case Op.ClientBase when T.ClientBase2016To2026(payload, _shift != 0 ? T.ClientBaseUs : T.ClientBaseDe) is { } cb:
+            case Op.ClientBase when T.ClientBase2016To2026(payload, IsUsBuild ? T.ClientBaseUs : T.ClientBaseDe) is { } cb:
                 ctx.Replace(cb);
                 return;
 
@@ -279,7 +300,7 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(cbf);
                 return;
 
-            case Op.RewardInvenAck when _shift != 0 && T.RewardInven2016To2026(payload) is { } ri:
+            case Op.RewardInvenAck when IsUsBuild && T.RewardInven2016To2026(payload) is { } ri:
                 ctx.Replace(ri);
                 return;
 
