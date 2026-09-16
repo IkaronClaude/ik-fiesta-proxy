@@ -174,21 +174,29 @@ internal static class T
     }
 
     /// <summary>
-    /// 105 B -> 124 B (German) or 362 B (US). The head keeps its offsets through fame, then two bytes before
-    /// fame, one before a 32-bit cen, two after it, the map at 67, x/y at 79/83, free stats at 87, then a
-    /// zero tail. The two builds disagree on the LENGTH and nothing else: the first 124 bytes of the US
-    /// frame land on exactly these offsets (map "Rou" at 67, x 7572 at 79, y 4492 at 83) and every byte from
-    /// 122 on is zero. Sending a US client the 124-byte form leaves it reading 238 bytes past the end of the
-    /// first packet of the zone burst.
+    /// 105 B -> 362 B: PROTO_NC_CHAR_BASE_CMD with ONE byte inserted at offset 54, then zero-padded.
+    ///
+    /// Every field of the 2016 struct (from the PDB extract) lands one byte later in the US 2026 frame, and
+    /// the whole of OfficialUS2.pcapng's login frame reads correctly on that and on nothing else:
+    ///     slotno 24, Level 25 = 2          Experience u64 26 = 17        CurHP u32 42 = 53, CurSP 46 = 89
+    ///     CurLP u32 50 = 0                 the inserted byte at 54       fame u32 55 = 2
+    ///     Cen u64 59 = 104                 logininfo 67 = "Rou"          x 79 = 4913, y 83 = 5976
+    /// The capture's own NC_CHAR_CENCHANGE_CMD then walks that character 104 -> 156 -> 208 -> ... -> 1114,
+    /// which is what the player saw on screen.
+    ///
+    /// This was three separate transcription errors before: two filler bytes at 54 and one more at 58 put
+    /// fame and cen at the wrong offsets, only the LOW HALF of the 64-bit cen was copied, and the byte at
+    /// 2016 offset 86 was dropped so everything from statdistribute on lost the shift. The visible symptom
+    /// was money reading as a large wrong number (44059 on a character holding 1).
     /// </summary>
+    private const int ClientBaseInsertAt = 54;
+
     public static byte[]? ClientBase2016To2026(byte[] p, int total)
     {
-        if (p.Length != 105) return null;
-        var body = Concat(Slice(p, 0, 54), new byte[2], Slice(p, 54, 58 - 54), new byte[1], Slice(p, 58, 62 - 58), new byte[2],
-                          Slice(p, 66, 78 - 66), Slice(p, 78, 86 - 78), Slice(p, 87, 92 - 87), Slice(p, 92, 105 - 92));
-        if (body.Length > total) return null;
+        if (p.Length != 105 || total < 106) return null;
         var outp = new byte[total];
-        body.CopyTo(outp, 0);
+        Array.Copy(p, 0, outp, 0, ClientBaseInsertAt);
+        Array.Copy(p, ClientBaseInsertAt, outp, ClientBaseInsertAt + 1, p.Length - ClientBaseInsertAt);
         return outp;
     }
 

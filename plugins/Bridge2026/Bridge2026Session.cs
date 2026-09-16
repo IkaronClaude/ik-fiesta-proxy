@@ -258,7 +258,8 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(cs);
                 return;
 
-            case Op.ClientBase when T.ClientBase2016To2026(payload, IsUsBuild ? T.ClientBaseUs : T.ClientBaseDe) is { } cb:
+            // Always the US width: the bridge targets the US build (the German client is for capturing only).
+            case Op.ClientBase when T.ClientBase2016To2026(payload, T.ClientBaseUs) is { } cb:
                 ctx.Replace(cb);
                 return;
 
