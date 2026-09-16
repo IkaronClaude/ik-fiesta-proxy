@@ -93,6 +93,11 @@ internal sealed class BridgePump
                 var opcode = (ushort)(body[0] | (body[1] << 8));
                 var packet = new FiestaPacket(opcode, new ReadOnlyMemory<byte>(body, 2, body.Length - 2));
 
+                // Same per-frame trace the other route modes emit under PROXY_PACKET_LOG. On a bridge it
+                // is the only view of the DECODED client direction, which is where every layout in a
+                // translation plugin gets measured, so it logs the plaintext rather than the wire bytes.
+                PacketLog.Info($"[{_service}] {arrow} opcode=0x{packet.Opcode:X4} payload_len={packet.Payload.Length}  {PacketLog.Hex(packet.Payload)}");
+
                 var ctx = new PluginPacketContext(packet, fromClient);
                 foreach (var s in _sessions)
                 {
@@ -109,11 +114,25 @@ internal sealed class BridgePump
 
                 if (ctx.Forwarded is { } forward)
                 {
+                    if (!ReferenceEquals(forward, packet))
+                        PacketLog.Info($"[{_service}] {arrow} [translated] opcode=0x{forward.Opcode:X4} payload_len={forward.Payload.Length}  {PacketLog.Hex(forward.Payload)}");
                     if (fromClient) await SendToServerAsync(forward, ct);
                     else await SendToClientAsync(forward, ct);
                 }
-                foreach (var extra in ctx.ExtraToServer) await SendToServerAsync(extra, ct);
-                foreach (var extra in ctx.ExtraToClient) await SendToClientAsync(extra, ct);
+                else
+                {
+                    PacketLog.Info($"[{_service}] {arrow} [dropped] opcode=0x{packet.Opcode:X4}");
+                }
+                foreach (var extra in ctx.ExtraToServer)
+                {
+                    PacketLog.Info($"[{_service}] -> server opcode=0x{extra.Opcode:X4} payload_len={extra.Payload.Length}  {PacketLog.Hex(extra.Payload)}");
+                    await SendToServerAsync(extra, ct);
+                }
+                foreach (var extra in ctx.ExtraToClient)
+                {
+                    PacketLog.Info($"[{_service}] -> client opcode=0x{extra.Opcode:X4} payload_len={extra.Payload.Length}  {PacketLog.Hex(extra.Payload)}");
+                    await SendToClientAsync(extra, ct);
+                }
             }
         }
         catch (OperationCanceledException) { }

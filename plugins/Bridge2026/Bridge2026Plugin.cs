@@ -17,6 +17,8 @@ namespace Bridge2026;
 ///   CHECKSUMS       file of the 49 ressystem checksums the 2016 zone expects, one hex line each
 ///   WORLD_STATUS    force every world row's status byte, for testing the client's display
 ///   OPCODES         JSON of the opcodes the 2016 build defines; without it nothing is filtered
+///   ITEM_CLASSES    "<id> <class>" per line, from the 2026 client's ItemInfo. Without it inventory
+///                   records cannot be translated and equipment stays invisible past the first slot.
 ///
 /// Relaying an opcode the 2016 build does not define makes the server close the connection, so OPCODES is
 /// worth supplying: it is the difference between a clean drop and an unexplained disconnect.
@@ -27,6 +29,7 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     private HashSet<ushort>? _known2016;
     private string _advertise = "";
     private int _portOffset;
+    private Dictionary<int, int>? _itemClass;
 
     public string Name => "bridge2026";
 
@@ -69,6 +72,26 @@ public sealed class Bridge2026Plugin : IProxyPlugin
                       + (sums.Count == 49 ? "" : " -- the 2016 zone expects exactly 49"));
         }
 
+        if (s.TryGetValue("ITEM_CLASSES", out var ic) && File.Exists(ic))
+        {
+            var map = new Dictionary<int, int>();
+            foreach (var line in File.ReadAllLines(ic))
+            {
+                var t = line.AsSpan().Trim();
+                if (t.Length == 0 || t[0] == '#') continue;
+                var sp = t.IndexOf(' ');
+                if (sp > 0 && int.TryParse(t[..sp], out var id) && int.TryParse(t[(sp + 1)..], out var cls))
+                    map[id] = cls;
+            }
+            _itemClass = map;
+            host.Info($"{Name}: {map.Count} item classes from {ic}");
+        }
+        else
+        {
+            host.Warn($"{Name}: no ITEM_CLASSES file, so inventory records are relayed untranslated and "
+                      + "equipment past the first slot will not appear");
+        }
+
         if (s.TryGetValue("OPCODES", out var op) && File.Exists(op))
         {
             try
@@ -106,6 +129,12 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     /// <summary>Where the client should dial for a service the server advertised on <paramref name="port"/>.</summary>
     public (string Host, ushort Port) EndpointFor(ushort port)
         => (_advertise, (ushort)(port + _portOffset));
+
+    /// <summary>The item's attribute class, or -1 when it is unknown or no table was supplied.</summary>
+    public int ClassOf(int itemId)
+        => _itemClass is not null && _itemClass.TryGetValue(itemId, out var c) ? c : -1;
+
+    public bool HasItemClasses => _itemClass is not null;
 
     /// <summary>False only when an opcode list was supplied and this opcode is not in it.</summary>
     public bool IsKnownTo2016(ushort opcode) => _known2016 is null || _known2016.Contains(opcode);
