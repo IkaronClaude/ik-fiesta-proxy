@@ -277,6 +277,117 @@ public class TranslatorTests
     public void Only_the_top_of_the_user_department_is_renumbered(ushort op, int shift, int expected)
         => Op.U(op, shift).ShouldBe((ushort)expected);
 
+    // ---------------------------------------------------------------- combat
+
+    [Theory]
+    [InlineData(6, 10)]     // HIT_OBJ_START
+    [InlineData(12, 16)]    // HIT_FLD_START
+    [InlineData(8, 12)]     // SOMEONE_HIT_OBJ_START
+    [InlineData(14, 18)]    // SOMEONE_HIT_FLD_START
+    public void A_cast_start_gains_a_trailing_u32(int size2016, int size2026)
+    {
+        var outp = T.HitStart2016To2026(new byte[size2016], size2016)!;
+        outp.Length.ShouldBe(size2026);
+        BitConverter.ToUInt32(outp, size2016).ShouldBe(1u);
+    }
+
+    [Fact]
+    public void A_cast_start_of_the_wrong_length_is_refused()
+        => T.HitStart2016To2026(new byte[7], 6).ShouldBeNull();
+
+    [Fact]
+    public void Skill_hit_damage_gains_a_skill_id_and_widens_every_record()
+    {
+        // {index 9, caster 10, 2 records} + 2 x 14 B
+        var p = Concat(Bits((ushort)9), Bits((ushort)10), new byte[] { 2 }, Fill(28, 0x40));
+        var outp = T.SkillHit2016To2026(p)!;
+
+        outp.Length.ShouldBe(9 + 42);
+        BitConverter.ToUInt16(outp, 0).ShouldBe((ushort)9);      // index, which pairs back to the cast start
+        BitConverter.ToUInt16(outp, 2).ShouldBe((ushort)10);     // caster
+        outp[4].ShouldBe((byte)2);                               // count
+        outp[5].ShouldBe((byte)0); outp[6].ShouldBe((byte)0);    // skill id, left zero
+        outp[7].ShouldBe((byte)0xFF); outp[8].ShouldBe((byte)0xFF);
+        for (var r = 0; r < 2; r++)
+        {
+            for (var i = 0; i < 14; i++) outp[9 + 21 * r + i].ShouldBe((byte)(0x40 + 14 * r + i));
+            for (var i = 14; i < 21; i++) outp[9 + 21 * r + i].ShouldBe((byte)0);
+        }
+    }
+
+    [Fact]
+    public void Skill_hit_damage_with_a_count_that_does_not_divide_is_refused()
+        => T.SkillHit2016To2026(new byte[] { 0, 0, 0, 0, 3, 1, 2 }).ShouldBeNull();
+
+    [Fact]
+    public void Dot_and_someone_swing_gain_seven_zero_bytes()
+    {
+        var outp = T.Tail7_2016To2026(Fill(13, 0x11), 13)!;
+        outp.Length.ShouldBe(20);
+        outp[12].ShouldBe((byte)(0x11 + 12));
+        for (var i = 13; i < 20; i++) outp[i].ShouldBe((byte)0);
+    }
+
+    // ---------------------------------------------------------------- quests, shops, character list
+
+    [Fact]
+    public void A_quest_entry_widens_its_five_mob_counts_to_u16()
+    {
+        // A doing entry off the fighter fixture: its third mob count is 3, the rest zero.
+        var q16 = Hex("180008f1377a6a000000009a397a6a0000000001000000000003000000000000");
+        var outp = T.QuestDoing2016To2026(Concat(Hex("cd0b00000101"), q16))!;
+
+        outp.Length.ShouldBe(6 + 37);
+        outp.AsSpan(6, 24).ToArray().ShouldBe(q16[..24]);                          // head unchanged
+        outp.AsSpan(30, 10).ToArray().ShouldBe(new byte[] { 0, 0, 3, 0, 0, 0, 0, 0, 0, 0 });
+        outp.AsSpan(40, 3).ToArray().ShouldBe(q16[29..32]);                        // flags and time follow
+    }
+
+    [Fact]
+    public void Quest_doing_takes_its_count_from_byte_five_and_repeat_from_a_u16()
+    {
+        var q16 = new byte[32];
+        T.QuestDoing2016To2026(Concat(Hex("cd0b00000102"), q16, q16))!.Length.ShouldBe(6 + 74);
+        T.QuestRepeat2016To2026(Concat(Hex("cd0b00000300"), q16, q16, q16))!.Length.ShouldBe(6 + 111);
+    }
+
+    [Fact]
+    public void A_quest_list_whose_count_does_not_match_its_length_is_refused()
+    {
+        T.QuestDoing2016To2026(Concat(Hex("cd0b00000102"), new byte[32])).ShouldBeNull();
+        T.QuestRepeat2016To2026(Concat(Hex("cd0b00000200"), new byte[32])).ShouldBeNull();
+    }
+
+    [Fact]
+    public void A_shop_record_widens_its_slot_to_u32()
+    {
+        var p = Concat(Bits((ushort)2), Bits((ushort)0x1234),
+                       new byte[] { 0, 0x10, 0x27, 7, 0x11, 0x27 });
+        var outp = T.ShopTable2016To2026(p)!;
+
+        outp.ShouldBe(Concat(Bits((ushort)2), Bits((ushort)0x1234),
+                             Bits(0u), Bits((ushort)0x2710),
+                             Bits(7u), Bits((ushort)0x2711)));
+    }
+
+    [Fact]
+    public void A_shop_table_whose_count_does_not_match_its_length_is_refused()
+        => T.ShopTable2016To2026(Concat(Bits((ushort)3), Bits((ushort)0), new byte[3])).ShouldBeNull();
+
+    [Theory]
+    [InlineData(0, 304)]    // German build
+    [InlineData(1, 305)]    // US build, one more abstate byte
+    public void A_character_list_translates_every_row(int usExtra, int rowSize)
+    {
+        var outp = T.CharacterList2016To2026(Concat(new byte[] { 2 }, new byte[235], new byte[235]), usExtra)!;
+        outp[0].ShouldBe((byte)2);
+        outp.Length.ShouldBe(1 + 2 * rowSize);
+    }
+
+    [Fact]
+    public void A_character_list_whose_count_does_not_match_its_length_is_refused()
+        => T.CharacterList2016To2026(Concat(new byte[] { 2 }, new byte[235]), 0).ShouldBeNull();
+
     // ---------------------------------------------------------------- helpers
 
     private static byte[] Payload(int length, int n)
@@ -291,5 +402,26 @@ public class TranslatorTests
         var p = new byte[3 + T.Avatar2016 * n];
         p[2] = (byte)n;
         return p;
+    }
+    private static byte[] Hex(string s) => Convert.FromHexString(s);
+
+    private static byte[] Bits(ushort v) => BitConverter.GetBytes(v);
+
+    private static byte[] Bits(uint v) => BitConverter.GetBytes(v);
+
+    /// <summary>A run of distinguishable bytes, so a translation that moves them shows where they went.</summary>
+    private static byte[] Fill(int length, int from)
+    {
+        var p = new byte[length];
+        for (var i = 0; i < length; i++) p[i] = (byte)(from + i);
+        return p;
+    }
+
+    private static byte[] Concat(params byte[][] parts)
+    {
+        var outp = new byte[parts.Sum(p => p.Length)];
+        var at = 0;
+        foreach (var p in parts) { p.CopyTo(outp, at); at += p.Length; }
+        return outp;
     }
 }
