@@ -49,15 +49,24 @@ public sealed class Bridge2026Plugin : IProxyPlugin
 
         if (s.TryGetValue("CHECKSUMS", out var cs) && File.Exists(cs))
         {
+            // Each checksum goes on the wire as the 32 ASCII characters of an MD5 hex digest, NOT as the
+            // 16 bytes they encode: MAP_LOGIN_REQ is 22 + 49 * 32 = 1590 bytes. Decoding them here would
+            // halve the packet and the zone would refuse it.
             var sums = new List<byte[]>();
             foreach (var line in File.ReadAllLines(cs))
             {
                 var t = line.Trim();
                 if (t.Length == 0 || t.StartsWith('#')) continue;
-                sums.Add(T.FromHex(t));
+                if (t.Length != 32)
+                {
+                    host.Warn($"{Name}: skipping a {t.Length}-character checksum in {cs}; each must be 32 hex characters");
+                    continue;
+                }
+                sums.Add(System.Text.Encoding.ASCII.GetBytes(t));
             }
             Checksums = sums;
-            host.Info($"{Name}: {sums.Count} zone checksums from {cs}");
+            host.Info($"{Name}: {sums.Count} zone checksums from {cs}"
+                      + (sums.Count == 49 ? "" : " -- the 2016 zone expects exactly 49"));
         }
 
         if (s.TryGetValue("OPCODES", out var op) && File.Exists(op))

@@ -7,3 +7,5 @@ publish/
 *.swp
 __pycache__/
 *.pyc
+deploy/bridge2026/.env
+run/
