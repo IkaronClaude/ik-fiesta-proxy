@@ -22,6 +22,7 @@ namespace Bridge2026;
 /// </summary>
 internal sealed class Bridge2026Session : IPluginSession
 {
+
     private readonly Bridge2026Plugin _plugin;
     private readonly PluginSessionInfo _info;
     private readonly bool _isLoginStage;
@@ -86,30 +87,32 @@ internal sealed class Bridge2026Session : IPluginSession
         // against the real 2026 server with the conversation carrying on afterwards, so the client is
         // correct and the 2016 zone is the side that cannot read what it sends.
         //
-        // MEASURED 2026-09-16, and it settles this: on the 2016 wire QSC command 06 is FIRE AND
-        // FORGET. Across JCQ.pcapng and Full.pcapng - six command-06 frames between them, including
-        // the job-change quest that is the whole reason this opcode exists - the 2016 client answers
-        // it with NOTHING. The server sends 06 and carries straight on by itself: CENCHANGE, EXPGAIN,
-        // FAMEGAIN, then the next command. The frames the client does send next are ordinary gameplay
-        // (NPC clicks, movement, chat), and no 441F appears in any 2016 capture we hold.
+        // MEASURED against a live zone 2026-09-16, and the length was never the problem.
         //
-        // So the 2016 zone has no handler waiting on this reply, and DROPPING IT IS THE TRANSLATION,
-        // not a hole in one. It reproduces exactly what the 2016 wire does with command 06: nothing.
-        // The 2026 client answering 06 at all is the behaviour that changed, on the client side.
+        // _RNG here is RING, not random. NC_QUEST_JOBDUNGEON_FIND_RNG is one of the zone-to-zone RING
+        // packets - a query passed around the ring of zone servers until one can answer "which zone
+        // hosts this job dungeon?". Its handler is ZoneListenSession::zls_NC_QUEST_JOBDUNGEON_FIND_RNG,
+        // and the zone keeps a SEPARATE protocol table per session kind
+        // (PROTOCOLFUNCTIONTEMPLETE<ShinePlayer> for the client link, <ZoneListenSession> for the
+        // zone-to-zone link). This opcode is registered only in the latter. A game client cannot
+        // legitimately send it at all, so there is nothing here to translate INTO.
         //
-        // The earlier note here said the 2016 client "resolves it and sends the names back", and that
-        // this needed a job-dungeon capture to model. That was read off the 2016 struct's shape
-        // (ClientMapName, ServerMapName, ScriptName) rather than off a wire, and the wire disagrees.
-        // PROTO_NC_QUEST_JOBDUNGEON_FIND_RNG does exist in the 2016 PDB, so some flow may still use
-        // it - but it is not this one, and if such a flow turns up it will announce itself as a
-        // different symptom than a dialogue that ends early.
+        // Padding it to the 2016 width was tried and is INERT. Sending a full 115-byte frame from a
+        // client session made the zone answer exactly as it does for the 2-byte one:
+        //   ClientSession::zbs_Parsing - Not registered protocol (Dept/Cmd=17/31)
+        // No crash, no assert, and the login burst continued. So dropping loses nothing a padded
+        // frame would have gained.
+        //
+        // What is left open is what the 2026 client MEANS by 0x441F. 2016 department 17 defines
+        // commands up to 32 and nothing above, and the 2026 build renumbers departments (USER shifts
+        // +2 from cmd 0x2c), so this is most likely a collision: some 2026 client request whose number
+        // lands on a 2016 zone-to-zone opcode. Naming it needs the 2026 PDB or a client-side trace;
+        // until then dropping is correct rather than merely safe.
         if (p.Opcode == Op.QuestJobDungeonFindRng && payload.Length != Op.QuestJobDungeonFindRng2016Size)
         {
             ctx.Drop();
             _plugin.Log($"[{_info.ServiceName}] dropped NC_QUEST_JOBDUNGEON_FIND_RNG ({payload.Length} B; "
-                         + $"the 2016 build reads {Op.QuestJobDungeonFindRng2016Size}). This is what the 2016 "
-                         + "wire does with QSC command 06 - it is answered by nothing - so the conversation "
-                         + "continues normally. Relaying it would disconnect the player.");
+                         + $"the 2016 build reads {Op.QuestJobDungeonFindRng2016Size}).");
             return;
         }
 
