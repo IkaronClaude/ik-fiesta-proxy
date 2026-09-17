@@ -18,6 +18,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\plugins\Bridge2026\Bridge2026.csproj" />
+    <!-- The plugin references these with Private=false (the host supplies them at run time), so a test
+         that builds a PluginPacketContext has to reference them itself. -->
+    <ProjectReference Include="..\..\src\FiestaProxy\FiestaProxy.csproj" />
+    <ProjectReference Include="..\..\lib\FiestaLib-Reloaded\src\FiestaLibReloaded.Networking\FiestaLibReloaded.Networking.csproj" />
   </ItemGroup>
 
   <ItemGroup>
