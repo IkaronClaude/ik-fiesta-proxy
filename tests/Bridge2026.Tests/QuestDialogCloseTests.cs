@@ -144,56 +144,60 @@ public class QuestDialogCloseTests
         (onZone.Forwarded?.Opcode ?? 0).ShouldNotBe(Op.AvatarListReq16);
     }
 
-    // ---- "select server": the bridge issues the re-login ticket, so the bridge redeems it ----
+    // ---- "select server": the 2016 servers' own OTP handover, renumbered - the bridge holds nothing ----
 
-    private static Bridge2026Session LoginSession(Bridge2026Plugin plugin, string client = "10.0.0.2:50000")
-        => new(plugin, new PluginSessionInfo("Login", plugin.LoginPort, "127.0.0.1", 9010, client, "10.0.0.1:19010"));
+    private static Bridge2026Session LoginSession(Bridge2026Plugin plugin)
+        => new(plugin, new PluginSessionInfo("Login", plugin.LoginPort, "127.0.0.1", 9010, "10.0.0.2:50000", "10.0.0.1:19010"));
 
-    private static byte[] Login2026(string? ticket, string user)
+    private static Bridge2026Session WmSession(Bridge2026Plugin plugin)
+        => new(plugin, new PluginSessionInfo("WorldManager_0", 19013, "127.0.0.1", 9013, "10.0.0.2:50001", "10.0.0.1:19013"));
+
+    [Fact]
+    public void Select_server_is_relayed_to_the_world_manager_as_WILL_WORLD_SELECT()
     {
-        var p = new byte[349];
-        if (ticket is not null) System.Text.Encoding.ASCII.GetBytes(ticket).CopyTo(p, 0);
-        System.Text.Encoding.ASCII.GetBytes(user).CopyTo(p, 32);
-        return p;
-    }
+        var ctx = FromClient(WmSession(new Bridge2026Plugin()), Op.C26Back);
 
-    private static string UserOf(PluginPacketContext ctx)
-    {
-        var body = ctx.ExtraToServer.First(x => x.Opcode == Op.Login16).Payload.ToArray();
-        return System.Text.Encoding.ASCII.GetString(body, 0, 18).TrimEnd((char)0);
+        ctx.Forwarded!.Opcode.ShouldBe(Op.WillWorldSelectReq16);
+        ctx.ExtraToClient.ShouldBeEmpty();                                  // the SERVER answers, not the bridge
     }
 
     [Fact]
-    public void Select_server_relogin_is_redeemed_with_the_credentials_the_client_first_used()
+    public void The_world_managers_OTP_reaches_the_client_under_the_2026_number_untouched()
     {
-        var plugin = new Bridge2026Plugin();
-        UserOf(FromClient(LoginSession(plugin), Op.C26Login, Login2026(null, "test2026"))).ShouldBe("test2026");
+        var ack = new byte[34];
+        ack[0] = 0x58; ack[1] = 0x1E;
+        System.Text.Encoding.ASCII.GetBytes("5bb179a4586d21175a93dc67941e49bc").CopyTo(ack, 2);
 
-        var wm = new Bridge2026Session(plugin,
-            new PluginSessionInfo("WorldManager_0", 19013, "127.0.0.1", 9013, "10.0.0.2:50001", "10.0.0.1:19013"));
-        var back = FromClient(wm, Op.C26Back);
-        var ack = back.ExtraToClient.Single(x => x.Opcode == Op.C26BackAck).Payload.ToArray();
-        var ticket = System.Text.Encoding.ASCII.GetString(ack, 2, 32);
-        ticket.ShouldNotBe("af97e90b50aefbba3419d7ec7ef98cd4");          // not the replayed capture any more
+        var ctx = FromServer(WmSession(new Bridge2026Plugin()), Op.WillWorldSelectAck16, ack);
 
-        // the client comes back on a NEW connection (new port) with the ticket and an empty body
-        var relogin = FromClient(LoginSession(plugin, "10.0.0.2:50099"), Op.C26Login, Login2026(ticket, ""));
-        UserOf(relogin).ShouldBe("test2026");
-
-        // single use
-        UserOf(FromClient(LoginSession(plugin, "10.0.0.2:50100"), Op.C26Login, Login2026(ticket, ""))).ShouldBe("");
+        ctx.Forwarded.ShouldBeNull();                                       // 0x0C34 means something else to 2026
+        var sent = ctx.ExtraToClient.Single();
+        sent.Opcode.ShouldBe(Op.C26BackAck);
+        sent.Payload.ToArray().ShouldBe(ack);
     }
 
     [Fact]
-    public void A_ticket_is_worthless_from_another_address()
+    public void A_login_carrying_an_OTP_becomes_LOGIN_WITH_OTP_and_nothing_else()
     {
-        var plugin = new Bridge2026Plugin();
-        FromClient(LoginSession(plugin), Op.C26Login, Login2026(null, "test2026"));
-        var wm = new Bridge2026Session(plugin,
-            new PluginSessionInfo("WorldManager_0", 19013, "127.0.0.1", 9013, "10.0.0.2:50001", "10.0.0.1:19013"));
-        var ack = FromClient(wm, Op.C26Back).ExtraToClient.Single(x => x.Opcode == Op.C26BackAck).Payload.ToArray();
-        var ticket = System.Text.Encoding.ASCII.GetString(ack, 2, 32);
+        var login = new byte[349];
+        System.Text.Encoding.ASCII.GetBytes("5bb179a4586d21175a93dc67941e49bc").CopyTo(login, 0);
 
-        UserOf(FromClient(LoginSession(plugin, "10.9.9.9:40000"), Op.C26Login, Login2026(ticket, ""))).ShouldBe("");
+        var ctx = FromClient(LoginSession(new Bridge2026Plugin()), Op.C26Login, login);
+
+        ctx.Forwarded.ShouldBeNull();
+        var sent = ctx.ExtraToServer.Single();                              // no credentials login, no xtrap
+        sent.Opcode.ShouldBe(Op.LoginWithOtp16);
+        System.Text.Encoding.ASCII.GetString(sent.Payload.ToArray()).ShouldBe("5bb179a4586d21175a93dc67941e49bc");
+    }
+
+    [Fact]
+    public void An_ordinary_login_is_still_an_ordinary_login()
+    {
+        var login = new byte[349];
+        System.Text.Encoding.ASCII.GetBytes("test2026").CopyTo(login, 32);
+
+        var ctx = FromClient(LoginSession(new Bridge2026Plugin()), Op.C26Login, login);
+
+        ctx.ExtraToServer.Select(x => x.Opcode).ShouldBe(new[] { Op.Login16, Op.XtrapReq16 });
     }
 }
