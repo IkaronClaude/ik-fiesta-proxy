@@ -171,6 +171,11 @@ internal static class ItemAttr
     /// Null, with a reason, when any record cannot be translated: the caller relays the original.
     /// </summary>
     public static byte[]? RecordList2016To2026(byte[] p, int countAt, Func<int, int> classOf, out string? refusal)
+        => RecordList2016To2026(p, countAt, RecordHead - 2, classOf, out refusal);
+
+    /// <summary>The same, for records whose item id sits <paramref name="itemAt"/> bytes in (inventory 3;
+    /// booth search 15: size, item handle u32, owner u16, price u64). The size byte is always first.</summary>
+    public static byte[]? RecordList2016To2026(byte[] p, int countAt, int itemAt, Func<int, int> classOf, out string? refusal)
     {
         refusal = null;
         if (p.Length < countAt + 1) { refusal = "shorter than its header"; return null; }
@@ -183,15 +188,15 @@ internal static class ItemAttr
         {
             if (o >= p.Length) { refusal = $"record {k} of {count} starts past the end"; return null; }
             var len = p[o] + 1;
-            if (len < RecordHead || o + len > p.Length)
+            if (len < itemAt + 2 || o + len > p.Length)
             {
                 refusal = $"record {k} at {o} says {p[o]} with {p.Length - o} bytes left";
                 return null;
             }
-            var rec = Record2016To2026(p, o, len, classOf);
+            var rec = LongRecord2016To2026(p, o, len, itemAt, classOf);
             if (rec is null)
             {
-                var id = p[o + 3] | (p[o + 4] << 8);
+                var id = p[o + itemAt] | (p[o + itemAt + 1] << 8);
                 refusal = $"item {id} (class {classOf(id)}) with {len - RecordHead} attribute bytes";
                 return null;
             }
@@ -201,6 +206,64 @@ internal static class ItemAttr
         if (p.Length - o > 1) { refusal = $"{p.Length - o} bytes after {count} records, expected at most 1"; return null; }
         outp.AddRange(new byte[4]);
         return outp.ToArray();
+    }
+
+    /// <summary>A size-prefixed record whose item id is <paramref name="itemAt"/> bytes in, translated by
+    /// the inventory-record rule: the extra head bytes ride along unchanged and the size byte grows with it.</summary>
+    private static byte[]? LongRecord2016To2026(byte[] p, int at, int len, int itemAt, Func<int, int> classOf)
+    {
+        if (itemAt == RecordHead - 2) return Record2016To2026(p, at, len, classOf);
+        var extra = itemAt - (RecordHead - 2);
+        var inner = new byte[len - extra];
+        Array.Copy(p, at + itemAt, inner, RecordHead - 2, len - itemAt);
+        inner[0] = (byte)(inner.Length - 1);
+        var t = Record2016To2026(inner, 0, inner.Length, classOf);
+        if (t is null) return null;
+        var outp = new byte[t.Length + extra];
+        Array.Copy(p, at, outp, 0, itemAt);                                  // size byte + the whole head
+        Array.Copy(t, RecordHead - 2, outp, itemAt, t.Length - (RecordHead - 2));
+        outp[0] = (byte)(outp.Length - 1);
+        return outp;
+    }
+
+    /// <summary>How many attribute bytes a 2016 item of this class uses, read from the attributes themselves;
+    /// -1 when the class is not one whose 2016 layout is known.</summary>
+    public static int Width2016(int cls, ReadOnlySpan<byte> attr2016)
+    {
+        if (EnchantableFixed.TryGetValue(cls, out var fixed2026))
+        {
+            var fixed2016 = fixed2026 - 1;
+            return attr2016.Length < fixed2016 ? -1 : fixed2016 + (attr2016[fixed2016 - 1] >> 1) * 3;
+        }
+        return Width2026(cls, attr2016);      // the other known classes are the same on both wires
+    }
+
+    /// <summary>
+    /// One item at <paramref name="at"/> in a packet that may carry it at its FULL struct size (a 103-byte
+    /// SHINE_ITEM_STRUCT whose unused tail is padding) or trimmed to its width. The used part is translated
+    /// as a record; trimmed, the packet grows by the byte 2026 added, padded, it keeps its size - the official
+    /// NC_COLLECT_CARDOPEN_CMD is 106 B, the 2016 struct size. The 2026 item parsers (0x79BDB0, 0x79C8F0)
+    /// take the width from the item class, so the padding is never read.
+    /// </summary>
+    public static byte[]? LeadingItem2016To2026(byte[] p, int at, Func<int, int> classOf)
+    {
+        if (p.Length < at + 2) return null;
+        var id = p[at] | (p[at + 1] << 8);
+        if (id == 0xFFFF) return p;                                          // empty: nothing to widen
+        var cls = classOf(id);
+        var width = cls < 0 ? -1 : Width2016(cls, p.AsSpan(at + 2));
+        if (width < 0 || at + 2 + width > p.Length) return null;
+        var used = new byte[at + 2 + width];
+        Array.Copy(p, used, used.Length);
+        var t = TrailingItem2016To2026(used, at, classOf);
+        if (t is null) return null;
+        var padding = p.Length - used.Length;
+        if (padding == 0) return t;
+        var outp = new byte[p.Length];
+        Array.Copy(t, outp, Math.Min(t.Length, outp.Length));
+        if (t.Length < outp.Length)
+            Array.Copy(p, used.Length + 1, outp, t.Length, outp.Length - t.Length);
+        return outp;
     }
 
     /// <summary>
