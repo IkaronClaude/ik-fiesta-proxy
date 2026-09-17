@@ -115,4 +115,16 @@ public class QuestDialogCloseTests
         FromClient(s, Op.QuestScriptCmdAck, 0xA7, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00)
             .ExtraToClient.Count.ShouldBe(1);                              // still closing per ack
     }
+
+    [Fact]
+    public void The_2026_logout_is_renumbered_to_the_2016_one_not_relayed_as_a_server_opcode()
+    {
+        var s = ZoneSession();
+
+        var ctx = FromClient(s, Op.C26NormalLogout, 0x01);             // 01 = back to character select
+
+        ctx.Forwarded.ShouldNotBeNull();
+        ctx.Forwarded!.Opcode.ShouldBe(Op.NormalLogout16);
+        ctx.Forwarded.Payload.ToArray().ShouldBe(new byte[] { 0x01 });
+    }
 }
