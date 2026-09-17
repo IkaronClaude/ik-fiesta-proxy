@@ -13,9 +13,9 @@ namespace Bridge2026.Tests;
 /// </summary>
 public class QuestDialogCloseTests
 {
-    private static Bridge2026Session ZoneSession()
+    private static Bridge2026Session ZoneSession(Bridge2026Plugin? shared = null)
     {
-        var plugin = new Bridge2026Plugin();
+        var plugin = shared ?? new Bridge2026Plugin();
         return new Bridge2026Session(plugin,
             new PluginSessionInfo("Zone_0_4", 19028, "127.0.0.1", 9028, "10.0.0.2:50000", "10.0.0.1:19028"));
     }
@@ -69,5 +69,50 @@ public class QuestDialogCloseTests
         ctx.Forwarded.ShouldBeNull();
         ctx.ExtraToServer.ShouldBeEmpty();
         ctx.ExtraToClient.ShouldBeEmpty();
+    }
+
+    private static PluginPacketContext FromServer(Bridge2026Session s, ushort opcode, params byte[] payload)
+    {
+        var ctx = new PluginPacketContext(new FiestaPacket(opcode, payload), fromClient: false);
+        s.OnServerPacket(ctx);
+        return ctx;
+    }
+
+    private static byte[] ScriptCmd(ushort quest, uint command)
+    {
+        var b = new byte[103];
+        BitConverter.TryWriteBytes(b.AsSpan(0), quest);
+        BitConverter.TryWriteBytes(b.AsSpan(2), command);
+        return b;
+    }
+
+    [Fact]
+    public void A_zone_that_announces_script_END_stops_getting_a_close_per_ack()
+    {
+        var plugin = new Bridge2026Plugin();
+        var s = ZoneSession(plugin);
+
+        var end = FromServer(s, Op.QuestScriptCmdReq, ScriptCmd(20135, Op.QscEnd));
+        end.Forwarded.ShouldNotBeNull();                                   // the client closes on it by itself
+
+        var ack = FromClient(s, Op.QuestScriptCmdAck, 0xA7, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00);
+        ack.Forwarded.ShouldNotBeNull();
+        ack.ExtraToClient.ShouldBeEmpty();                                 // no 442E: no flicker between pages
+
+        // learned per zone, and shared by every later session to that zone
+        FromClient(ZoneSession(plugin), Op.QuestScriptCmdAck, 0xA7, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00)
+            .ExtraToClient.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_dialogue_page_is_not_mistaken_for_an_END()
+    {
+        var plugin = new Bridge2026Plugin();
+        var s = ZoneSession(plugin);
+
+        FromServer(s, Op.QuestScriptCmdReq, ScriptCmd(20135, 2));           // QSC_SAY
+
+        FromClient(s, Op.QuestScriptCmdAck, 0xA7, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00)
+            .ExtraToClient.Count.ShouldBe(1);                              // still closing per ack
     }
 }

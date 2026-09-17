@@ -144,6 +144,15 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     /// </summary>
     public int LastShift { get; set; }
 
+    /// <summary>
+    /// Upstream services seen sending NC_QUEST_SCRIPT_CMD_REQ with command QSC_END. A stock 2016 zone never
+    /// does (the case is dead code); one carrying the quest-script-end-notify recipe does, and its END closes
+    /// the 2026 dialog on the last page by the client's own handler. For such a zone the per-ack 0x442E is
+    /// not just unnecessary, it is the close-and-reopen flicker between pages. Learned, not configured, so a
+    /// stack with some zones patched and some not is right on both.
+    /// </summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, bool> ZoneAnnouncesQuestEnd { get; } = new();
+
     /// <summary>The item's attribute class, or -1 when it is unknown or no table was supplied.</summary>
     public int ClassOf(int itemId)
         => _itemClass is not null && _itemClass.TryGetValue(itemId, out var c) ? c : -1;

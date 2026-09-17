@@ -114,7 +114,10 @@ internal sealed class Bridge2026Session : IPluginSession
         // the client acks a page, forward the ack and hand the client a 442E. If the script has another
         // page, the SAY reopens the window exactly as it does for a 2016 client; if it has not, the
         // window is simply closed. No script knowledge, no last-page detection, no timer.
-        if (p.Opcode == Op.QuestScriptCmdAck && CloseDialogForClient)
+        // ...unless this zone has shown it announces the end of a script itself (see OnServerPacket): then
+        // the window must stay open between pages, and its own QSC_END closes it after the last one.
+        if (p.Opcode == Op.QuestScriptCmdAck && CloseDialogForClient
+            && !_plugin.ZoneAnnouncesQuestEnd.ContainsKey(_info.ServiceName))
         {
             ctx.ToClient(Op.QuestCloseDialog, Op.QuestCloseDialogPayload);
             _closeSentAt = Environment.TickCount64;
@@ -264,6 +267,16 @@ internal sealed class Bridge2026Session : IPluginSession
     {
         var p = ctx.Packet;
         var payload = p.Payload.ToArray();
+
+        // A 0x4401 whose STRUCT_QSC.Command is QSC_END (1): this zone tells its clients when a script ends.
+        // Relayed untouched - case 1 of the 2026 On_NC_QUEST_SCRIPT_CMD_REQ (Fiesta.exe 0x5B4645) is
+        // CloseWin(NpcDialogWin) - and remembered, so the per-ack close stops for this zone.
+        if (p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
+            && BitConverter.ToUInt32(payload, 2) == Op.QscEnd
+            && _plugin.ZoneAnnouncesQuestEnd.TryAdd(_info.ServiceName, true))
+        {
+            _plugin.Log($"[{_info.ServiceName}] zone announces quest script END: per-ack 0x442E off for this zone");
+        }
 
         switch (p.Opcode)
         {
