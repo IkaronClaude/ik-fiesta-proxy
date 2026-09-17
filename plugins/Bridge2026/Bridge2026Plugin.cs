@@ -153,47 +153,6 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     /// </summary>
     public System.Collections.Concurrent.ConcurrentDictionary<string, bool> ZoneAnnouncesQuestEnd { get; } = new();
 
-    // ---- "select server": the re-login ticket --------------------------------------------------------
-    // From character select the 2026 client can go back to the server list. It asks the world manager
-    // (0x0C24), gets a 32-character ticket (0x0C25), logs out, reconnects to the LOGIN server and sends its
-    // login packet with that ticket in the first 32 bytes and NO username or password. The 2016 login
-    // server knows nothing of tickets and refuses the empty login (err 72): "Disconnected from LogIn
-    // server". The bridge issued the ticket, so the bridge has to redeem it - with the login body it saw
-    // this client log in with.
-    //
-    // A ticket is random, single-use, short-lived and bound to the address it was issued to. The earlier
-    // code replayed one captured token to everybody, which was harmless only because nothing honoured it.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> _loginBodyByClient = new();
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Client, byte[] Body, long Expires)> _tickets = new();
-    private const int TicketLifetimeMs = 120_000;
-
-    private static string HostOf(string endpoint)
-    {
-        var i = endpoint.LastIndexOf(':');
-        return i > 0 ? endpoint[..i] : endpoint;
-    }
-
-    /// <summary>Remember the 2016 login body a client just logged in with (never logged, never persisted).</summary>
-    public void RememberLogin(string clientEndpoint, byte[] body2016) => _loginBodyByClient[HostOf(clientEndpoint)] = body2016;
-
-    /// <summary>A fresh ticket for this client, or null when the bridge never saw it log in.</summary>
-    public string? IssueTicket(string clientEndpoint)
-    {
-        var host = HostOf(clientEndpoint);
-        if (!_loginBodyByClient.TryGetValue(host, out var body)) return null;
-        var ticket = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-        _tickets[ticket] = (host, body, Environment.TickCount64 + TicketLifetimeMs);
-        return ticket;
-    }
-
-    /// <summary>The login body behind a ticket - once, in time, and only for the address it was issued to.</summary>
-    public byte[]? RedeemTicket(string ticket, string clientEndpoint)
-    {
-        if (!_tickets.TryRemove(ticket, out var t)) return null;
-        if (Environment.TickCount64 > t.Expires || t.Client != HostOf(clientEndpoint)) return null;
-        return t.Body;
-    }
-
     /// <summary>The item's attribute class, or -1 when it is unknown or no table was supplied.</summary>
     public int ClassOf(int itemId)
         => _itemClass is not null && _itemClass.TryGetValue(itemId, out var c) ? c : -1;

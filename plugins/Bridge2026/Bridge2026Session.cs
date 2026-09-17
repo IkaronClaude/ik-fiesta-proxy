@@ -162,21 +162,14 @@ internal sealed class Bridge2026Session : IPluginSession
         {
             var login = T.Login2026To2016(payload);
             ctx.Drop();
-            // The first 32 bytes are a re-login ticket: zeros on an ordinary login, and on "select server" a
-            // ticket this bridge issued, with the rest of the packet left empty. Redeem it for the login
-            // body the client originally sent; otherwise remember this body in case it comes back later.
-            if (login is not null)
+            // The first 32 bytes are a one-time password: zeros on an ordinary login, and after "select
+            // server" the OTP the 2016 world manager minted, with no username or password behind it. That
+            // is NC_USER_LOGIN_WITH_OTP_REQ, and the 2016 login server redeems it itself - see Opcodes.
+            if (login is not null && T.LoginOtp(payload) is { } otp)
             {
-                var ticket = T.LoginTicket(payload);
-                if (ticket is null)
-                    _plugin.RememberLogin(_info.ClientEndpoint, login);
-                else if (_plugin.RedeemTicket(ticket, _info.ClientEndpoint) is { } remembered)
-                {
-                    login = remembered;
-                    _plugin.Log($"[{_info.ServiceName}] re-login ticket redeemed (select server)");
-                }
-                else
-                    _plugin.Log($"[{_info.ServiceName}] re-login ticket NOT honoured: unknown, used, expired or from another address");
+                ctx.ToServer(Op.LoginWithOtp16, otp);
+                _plugin.Log($"[{_info.ServiceName}] login carries an OTP -> NC_USER_LOGIN_WITH_OTP_REQ");
+                return;
             }
             ctx.ToServer(Op.Login16, login ?? payload);
             if (login is null)
@@ -205,11 +198,11 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
-        // Answered here, never relayed: the 2016 server has no equivalent and hangs up on the opcode.
-        if (p.Opcode == Op.C26Back)
+        // "Select server": the 2016 handover under its 2016 number. The world manager answers with the OTP.
+        if (p.Opcode == Op.C26Back && !_isLoginStage)
         {
-            ctx.Drop();
-            ctx.ToClient(Op.C26BackAck, T.BackAck(_plugin.IssueTicket(_info.ClientEndpoint)));
+            ctx.Replace(new FiestaPacket(Op.WillWorldSelectReq16, payload));
+            _plugin.Log($"[{_info.ServiceName}] 0x0C24 -> NC_USER_WILL_WORLD_SELECT_REQ");
             return;
         }
         if (p.Opcode == Op.C26CreateOpen)
@@ -309,6 +302,15 @@ internal sealed class Bridge2026Session : IPluginSession
             && _plugin.ZoneAnnouncesQuestEnd.TryAdd(_info.ServiceName, true))
         {
             _plugin.Log($"[{_info.ServiceName}] zone announces quest script END: per-ack 0x442E off for this zone");
+        }
+
+        // The world manager's answer to "select server": {nError, sOTP[32]}, the same 34 bytes the 2026 client
+        // expects, under the 2026 number. (2026 uses 0x0C34 for its create-character ack, so it cannot pass.)
+        if (p.Opcode == Op.WillWorldSelectAck16 && !_isLoginStage && payload.Length == 34)
+        {
+            ctx.Drop();
+            ctx.ToClient(Op.C26BackAck, payload);
+            return;
         }
 
         switch (p.Opcode)

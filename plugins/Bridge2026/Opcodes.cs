@@ -101,10 +101,28 @@ internal static class Op
     public static readonly ushort[] ShopTables = { 0x3c03, 0x3c04, 0x3c06, 0x3c09, 0x3c0a, 0x3c0b };
 
     // ---- client frames that exist as 2016 opcodes but mean something else in 2026 ----
-    /// <summary>"Previous" on character select. NC_USER_REGISENUMBER_ACK in 2016, a SERVER->client
-    /// message, so relaying it makes the world manager hang up.</summary>
+    /// <summary>
+    /// "Select server" on character select - the 2016 servers' OWN one-time-password handover, renumbered.
+    ///     2026 0x0C24 (empty)              = 2016 0x0C33 NC_USER_WILL_WORLD_SELECT_REQ   client -> WM
+    ///     2026 0x0C25 {nError, sOTP[32]}   = 2016 0x0C34 NC_USER_WILL_WORLD_SELECT_ACK   WM -> client
+    ///     2026 login, OTP in bytes 0..31   = 2016 0x0C37 NC_USER_LOGIN_WITH_OTP_REQ      client -> Login
+    /// The world manager mints the OTP with the login server (0x0C35 / 0x0C36 between them) and the login
+    /// server redeems it: tools/otp_handover_test.py in Fiesta2026on2016 runs the whole exchange against
+    /// the 2016 stack with no bridge in the way and gets a world list back for the OTP alone. Even the
+    /// success code matches - 0x1E58 heads the 2016 ack and the ack in OfficialUS2.pcapng alike.
+    ///
+    /// Relayed unrenumbered these hang the connection up: 0x0C24 is NC_USER_REGISENUMBER_ACK in 2016, a
+    /// server->client message, and 2026 reuses 0x0C34 for its create-character ack.
+    ///
+    /// For one day (2026-09-17) the bridge answered 0x0C24 itself, first with a captured token replayed to
+    /// everybody and then with tickets of its own that it redeemed against login bodies it remembered.
+    /// The operator asked why the bridge was inventing what the server surely had; it had.
+    /// </summary>
     public const ushort C26Back = 0x0c24;
     public const ushort C26BackAck = 0x0c25;
+    public const ushort WillWorldSelectReq16 = 0x0c33;
+    public const ushort WillWorldSelectAck16 = 0x0c34;
+    public const ushort LoginWithOtp16 = 0x0c37;
     /// <summary>Opening the character-create screen; the reply carries the slot the new character takes.</summary>
     public const ushort C26CreateOpen = 0x0c32;
     public const ushort C26CreateOpenAck = 0x0c34;
