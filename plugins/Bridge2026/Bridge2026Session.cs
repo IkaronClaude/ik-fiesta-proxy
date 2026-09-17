@@ -41,7 +41,10 @@ internal sealed class Bridge2026Session : IPluginSession
     private static readonly bool CloseDialogForClient =
         Environment.GetEnvironmentVariable("BRIDGE2026_CLOSE_DIALOG") != "0";
 
-    private long _closeSentAt = long.MinValue;
+    // Nullable, NOT a long.MinValue sentinel: TickCount64 - long.MinValue overflows negative, which
+    // passed the "<= window" test and swallowed EVERY ENDOFTRADE of the session (2026-09-17, caught in
+    // the first live run - shops could never tell the server they had closed).
+    private long? _closeSentAt;
     private const int CloseEchoWindowMs = 1500;
 
     private byte _world;
@@ -122,10 +125,11 @@ internal sealed class Bridge2026Session : IPluginSession
         // goes through plain CloseWin -> NpcDialogWin::OnClose (0x5F4750), which sends nothing; only
         // CloseDialog (Esc, linkto) does. So the echo of our own 442E is not something the 2016 server
         // ever saw mid-script, and it is dropped.
-        if (p.Opcode == Op.ActEndOfTrade && Environment.TickCount64 - _closeSentAt <= CloseEchoWindowMs)
+        if (p.Opcode == Op.ActEndOfTrade && _closeSentAt is long sentAt
+            && Environment.TickCount64 - sentAt <= CloseEchoWindowMs)
         {
             ctx.Drop();
-            _closeSentAt = long.MinValue;
+            _closeSentAt = null;
             return;
         }
 
