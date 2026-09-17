@@ -222,4 +222,37 @@ public class ItemAttributeTests
     {
         ItemAttr.TrailingItem2016To2026(Convert.FromHexString("0D240D24" + "3930" + "0000"), 4, ClassOf).ShouldBeNull();
     }
+
+    // ------------------------------------------------------------------ counted record lists
+
+    [Fact]
+    public void An_empty_reward_inventory_is_the_eight_byte_2026_one()
+    {
+        // ours: count 0 and one stray byte. Official 2026: count u32 0 and four stray bytes.
+        Convert.ToHexString(ItemAttr.RecordList2016To2026(Convert.FromHexString("001D"), 0, ClassOf, out _)!)
+            .ShouldBe("0000000000000000");
+    }
+
+    [Fact]
+    public void A_storage_page_widens_its_count_and_translates_every_record()
+    {
+        var head = "80841E0000000000" + "10" + "00" + "00";                      // cen 2,000,000, page 0 of 16
+        var helmet = "1D" + "0024" + "C501" + "000000000000000000000000" + "09" + "09CC00" + "07BE00" + "0EB400" + "0A6000";
+        var p = Convert.FromHexString(head + "01" + helmet + "AB");               // one record + the stray byte
+
+        var outp = ItemAttr.RecordList2016To2026(p, 11, ClassOf, out var why);
+
+        why.ShouldBeNull();
+        Convert.ToHexString(outp!).ShouldBe(head + "01000000"
+            + "1E" + "0024" + "C501" + "000000000000000000000000" + "00" + "09" + "09CC00" + "07BE00" + "0EB400" + "0A6000"
+            + "00000000");
+    }
+
+    [Fact]
+    public void A_list_with_an_untranslatable_record_is_refused_whole()
+    {
+        var p = Convert.FromHexString("01" + "06" + "0024" + "3930" + "00" + "00");   // item 12345, class unknown
+        ItemAttr.RecordList2016To2026(p, 0, ClassOf, out var why).ShouldBeNull();
+        why.ShouldNotBeNull();
+    }
 }

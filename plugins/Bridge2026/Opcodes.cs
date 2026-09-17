@@ -65,6 +65,8 @@ internal static class Op
     public const ushort ItemCellChange = 0x3001;
     /// <summary>{exchange u16, location u8, item}: an item equipped or taken off.</summary>
     public const ushort ItemEquipChange = 0x3002;
+    /// <summary>{cen u64, maxpage u8, curpage u8, opentype u8, count, records}: a storage page.</summary>
+    public const ushort MenuOpenStorage = 0x3c08;
     public const ushort ChargedBuff = 0x104a;
     public const ushort RewardInvenAck = 0x302d;
     public const ushort RegenMob = 0x1c08;

@@ -441,8 +441,18 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(cbf);
                 return;
 
+            // Counted record lists: the count widens to u32 and the records take their 2026 widths.
+            case Op.RewardInvenAck or Op.MenuOpenStorage when IsUsBuild && _plugin.HasItemClasses:
+            {
+                var countAt = p.Opcode == Op.MenuOpenStorage ? 11 : 0;
+                if (ItemAttr.RecordList2016To2026(payload, countAt, _plugin.ClassOf, out var why) is { } list)
+                    ctx.Replace(list);
+                else
+                    _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4} not translated: {why}");
+                return;
+            }
             case Op.RewardInvenAck when IsUsBuild && T.RewardInven2016To2026(payload) is { } ri:
-                ctx.Replace(ri);
+                ctx.Replace(ri);                       // no item table loaded: the empty case still works
                 return;
 
             case Op.SwingDamage when T.Swing2016To2026(payload) is { } sw:

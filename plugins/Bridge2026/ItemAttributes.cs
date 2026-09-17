@@ -156,6 +156,54 @@ internal static class ItemAttr
     }
 
     /// <summary>
+    /// A counted list of inventory records - storage, reward inventory, guild storage - in the 2026 shape:
+    ///
+    ///     2016   header | count u8  | records (2016 widths) | 1 byte
+    ///     2026   header | count u32 | records (2026 widths) | 4 bytes
+    ///
+    /// Measured, not assumed. Official 2026: NC_MENU_OPENSTORAGE_CMD in LinuxZone20260914.pcapng and the
+    /// harvest captures (counts 0, 34, 35; 19 / 245 / 1136 B, every record walking out exactly) and
+    /// NC_ITEM_REWARDINVENOPEN_ACK in OfficialUS / OfficialUS2 (8 B empty) and the harvest captures (24
+    /// records). Our 2016 zone: the same two packets with the one trailing byte. The trailing bytes vary from
+    /// packet to packet on both wires - uninitialised memory past the array - so zeros are sent.
+    ///
+    /// <paramref name="countAt"/> is where the 2016 count byte sits; the header before it is copied unchanged.
+    /// Null, with a reason, when any record cannot be translated: the caller relays the original.
+    /// </summary>
+    public static byte[]? RecordList2016To2026(byte[] p, int countAt, Func<int, int> classOf, out string? refusal)
+    {
+        refusal = null;
+        if (p.Length < countAt + 1) { refusal = "shorter than its header"; return null; }
+        int count = p[countAt];
+        var outp = new List<byte>(p.Length + 8 + count);
+        outp.AddRange(p.AsSpan(0, countAt).ToArray());
+        outp.AddRange(BitConverter.GetBytes(count));
+        var o = countAt + 1;
+        for (var k = 0; k < count; k++)
+        {
+            if (o >= p.Length) { refusal = $"record {k} of {count} starts past the end"; return null; }
+            var len = p[o] + 1;
+            if (len < RecordHead || o + len > p.Length)
+            {
+                refusal = $"record {k} at {o} says {p[o]} with {p.Length - o} bytes left";
+                return null;
+            }
+            var rec = Record2016To2026(p, o, len, classOf);
+            if (rec is null)
+            {
+                var id = p[o + 3] | (p[o + 4] << 8);
+                refusal = $"item {id} (class {classOf(id)}) with {len - RecordHead} attribute bytes";
+                return null;
+            }
+            outp.AddRange(rec);
+            o += len;
+        }
+        if (p.Length - o > 1) { refusal = $"{p.Length - o} bytes after {count} records, expected at most 1"; return null; }
+        outp.AddRange(new byte[4]);
+        return outp.ToArray();
+    }
+
+    /// <summary>
     /// A packet whose LAST field is one item - {itemid u16, attributes} with no size byte, running to the end -
     /// with that item in the 2026 shape. <paramref name="at"/> is where the item id starts; everything before
     /// it is copied unchanged. Null when the record translator refuses (unmeasured class, unexpected width),
