@@ -162,6 +162,22 @@ internal sealed class Bridge2026Session : IPluginSession
         {
             var login = T.Login2026To2016(payload);
             ctx.Drop();
+            // The first 32 bytes are a re-login ticket: zeros on an ordinary login, and on "select server" a
+            // ticket this bridge issued, with the rest of the packet left empty. Redeem it for the login
+            // body the client originally sent; otherwise remember this body in case it comes back later.
+            if (login is not null)
+            {
+                var ticket = T.LoginTicket(payload);
+                if (ticket is null)
+                    _plugin.RememberLogin(_info.ClientEndpoint, login);
+                else if (_plugin.RedeemTicket(ticket, _info.ClientEndpoint) is { } remembered)
+                {
+                    login = remembered;
+                    _plugin.Log($"[{_info.ServiceName}] re-login ticket redeemed (select server)");
+                }
+                else
+                    _plugin.Log($"[{_info.ServiceName}] re-login ticket NOT honoured: unknown, used, expired or from another address");
+            }
             ctx.ToServer(Op.Login16, login ?? payload);
             if (login is null)
                 _plugin.Log($"[{_info.ServiceName}] login is {payload.Length} B, not the 349-byte 2026 layout: passed through");
@@ -193,7 +209,7 @@ internal sealed class Bridge2026Session : IPluginSession
         if (p.Opcode == Op.C26Back)
         {
             ctx.Drop();
-            ctx.ToClient(Op.C26BackAck, T.BackAck2026);
+            ctx.ToClient(Op.C26BackAck, T.BackAck(_plugin.IssueTicket(_info.ClientEndpoint)));
             return;
         }
         if (p.Opcode == Op.C26CreateOpen)
