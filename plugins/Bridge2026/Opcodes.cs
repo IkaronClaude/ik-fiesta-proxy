@@ -73,13 +73,13 @@ internal static class Op
     public const ushort QuestScriptCmdAck = 0x4402;   // C->S: {u16 nQuestID, u8 nQSC, u32 nResult}
     public const int QuestScriptCmdAckSize = 7;
 
-    // S->C, two bytes, a quest id. The 2026 server sends it at both ends of a dialogue script and the
-    // client closes the dialogue window on it. Every one of the 43 in OfficialUS2.pcapng carries
-    // 0xFFFF - the zone sentinel for "no quest" - so the packet reads as "the quest script context is
-    // now none". The 2016 server never sends it (0 in Full.pcapng, AbandonQuest.pcapng, JCQ.pcapng),
-    // which is why the 2026 client leaves the window open on our stack.
-    public const ushort QuestCurrentScript = 0x442e;
-    public static readonly byte[] QuestCurrentScriptNone = { 0xff, 0xff };
+    // S->C. "Close the NPC dialog": the 2026 handler (Fiesta.exe 0x5B4BE0) sets g_C319D5 and calls
+    // NpcDialogWin close, and never reads the payload. The official server sends FF FF, so that is
+    // what goes out, but the bytes carry no meaning. No 2016 equivalent; that client closes itself.
+    public const ushort QuestCloseDialog = 0x442e;
+    public static readonly byte[] QuestCloseDialogPayload = { 0xff, 0xff };
+
+    public const ushort ActEndOfTrade = 0x200b;       // C->S, empty: (8 << 10) | 0x0B
     public const ushort QuestJobDungeonFindRng = 0x441f;
     public const int QuestJobDungeonFindRng2016Size = 115;
 
