@@ -31,6 +31,13 @@ internal sealed class Bridge2026Session : IPluginSession
     private int _shift;
     private bool _shiftKnown;
 
+    // The quest-script command the server last asked the client to run, and for which quest. The
+    // server discards any ack whose nQSC is not the command it is waiting on, so this is what a
+    // translated ack has to carry.
+    private ushort _qscQuest;
+    private byte _qscCommand;
+    private bool _qscPending;
+
     private byte _world;
     private readonly Dictionary<byte, uint> _avatars = new();   // slot -> chrregnum
     private readonly HashSet<byte> _usedSlots = new();
@@ -94,8 +101,8 @@ internal sealed class Bridge2026Session : IPluginSession
         // hosts this job dungeon?". Its handler is ZoneListenSession::zls_NC_QUEST_JOBDUNGEON_FIND_RNG,
         // and the zone keeps a SEPARATE protocol table per session kind
         // (PROTOCOLFUNCTIONTEMPLETE<ShinePlayer> for the client link, <ZoneListenSession> for the
-        // zone-to-zone link). This opcode is registered only in the latter. A game client cannot
-        // legitimately send it at all, so there is nothing here to translate INTO.
+        // zone-to-zone link). This opcode is registered only in the latter, so relaying it reaches no
+        // handler on the client link - the translation has to go to a different opcode.
         //
         // Padding it to the 2016 width was tried and is INERT. Sending a full 115-byte frame from a
         // client session made the zone answer exactly as it does for the 2-byte one:
@@ -103,32 +110,61 @@ internal sealed class Bridge2026Session : IPluginSession
         // No crash, no assert, and the login burst continued. So dropping loses nothing a padded
         // frame would have gained.
         //
-        // AND THERE IS NO 2016 OPCODE TO REWRITE IT TO, which the captures settle rather than argue.
-        // Comparing the client->server quest opcodes of a 2016 quest flow against the 2026 one, the
-        // exchange lines up like this:
+        // WHAT THE CLIENT IS ACTUALLY WAITING FOR IS 0x442E, not an answer to the 441F. Reading
+        // OfficialUS2.pcapng as one interleaved stream instead of grepping the two opcodes apart:
         //
-        //     2016 (JCQ.pcapng)            2026 (OfficialUS2.pcapng)
+        //     2016 (Full.pcapng)           2026 (OfficialUS2.pcapng)
         //     S->C 4401 QSC command 06     S->C 4401 QSC command 06
-        //     (nothing from the client)    C->S 441F {questid}
-        //     S->C 4401 QSC command 0a     S->C 4420 LINK_FAIL, or 4401 QSC command 0a
+        //     (nothing at all)             S->C 442E {FF FF}        <- the window close
+        //                                  C->S 441F {questid}
+        //                                  C->S 200B ENDOFTRADE     <- window is now shut
+        //                                  S->C 4420 LINK_FAIL {err, questid}
         //
-        // In 2016 the server goes 06 -> rewards (CENCHANGE, EXPGAIN, FAMEGAIN) -> 0a with NO client
-        // frame in between, because it runs the ring search itself. 2026 made the client ask for it.
-        // Dropping therefore reproduces the 2016 exchange exactly, and the server's own 0a still
-        // reaches the client.
+        // 442E is what shuts the window, and it does not depend on the 441F at all: one exchange in
+        // that capture closes on a 442E with no 441F ever sent (the client had acked a page with
+        // nResult 02 instead of 01). Every quest ENDOFTRADE in the capture has a 442E within the three
+        // packets before it. All 43 of them carry 0xFFFF and none carry anything else.
         //
-        // Nor is it an opcode collision: 0x4420 NC_QUEST_JOBDUNGEON_LINK_FAIL_CMD is a 2016-defined
-        // opcode and the 2026 server sends it under that same number, so department 17 is not
-        // renumbered. 0x441F means job-dungeon-find on both wires; 2026 only changed who sends it.
+        // So the follow-on-quest question and the window close are two different exchanges:
+        //   441F {questid}  C->S  "is anything linked to this quest?"
+        //   4420 LINK_FAIL  S->C  "no" - 13 of the 15 in the capture end this way against the
+        //                         OFFICIAL server, so the client copes fine with the answer being no,
+        //   442E {FF FF}    S->C  "the script context is now none" - and THIS one it needs.
         //
-        // Worth knowing: 13 of the 15 441F exchanges in that capture end in LINK_FAIL (errors 0x30b0,
-        // 0x30b4, 0x30b5) against the OFFICIAL server, so the 2026 client copes with this going
-        // nowhere - which is the same thing it sees from us.
+        // The 2016 server sends neither, because it runs the ring search itself and has no concept of
+        // a script context to publish. Dropping the 441F therefore does NOT reproduce the 2016
+        // exchange, which was the earlier reading here: it reproduces the 2016 SERVER half while
+        // leaving a 2026 client waiting for a packet that build never sends. That is the reported
+        // symptom exactly - Next and Complete Quest do nothing, Esc closes the window, and the quest
+        // turns out to have progressed anyway.
         if (p.Opcode == Op.QuestJobDungeonFindRng && payload.Length != Op.QuestJobDungeonFindRng2016Size)
         {
             ctx.Drop();
+            // Answer it the way the 2016 client would: the ack the server is waiting on. Relaying the
+            // 441F itself is not an option (the client session has no handler for it at all) and
+            // dropping it stalls the script, because the server keeps waiting for an ack it never gets.
+            if (_qscPending && payload.Length >= 2)
+            {
+                var quest = (ushort)(payload[0] | (payload[1] << 8));
+                if (quest == _qscQuest)
+                {
+                    var ack = new byte[Op.QuestScriptCmdAckSize];
+                    ack[0] = payload[0];
+                    ack[1] = payload[1];
+                    ack[2] = _qscCommand;
+                    ack[3] = 1;            // nResult: the client ran it
+                    ctx.ToServer(Op.QuestScriptCmdAck, ack);
+                    // ...and give the client the 442E the 2016 server has no way to send, so the
+                    // dialogue window closes instead of hanging on its last page.
+                    ctx.ToClient(Op.QuestCurrentScript, Op.QuestCurrentScriptNone);
+                    _qscPending = false;
+                    _plugin.Log($"[{_info.ServiceName}] 441F -> NC_QUEST_SCRIPT_CMD_ACK "
+                                 + $"quest {quest} nQSC {_qscCommand}, + 442E {{FFFF}} to the client");
+                    return;
+                }
+            }
             _plugin.Log($"[{_info.ServiceName}] dropped NC_QUEST_JOBDUNGEON_FIND_RNG ({payload.Length} B; "
-                         + $"the 2016 build reads {Op.QuestJobDungeonFindRng2016Size}).");
+                         + $"no quest-script command outstanding to answer).");
             return;
         }
 
@@ -244,10 +280,23 @@ internal sealed class Bridge2026Session : IPluginSession
         }
     }
 
+    // Remember what the server asked for, so a 441F answer can be turned into the ack it wants.
+    private void NoteQuestScriptCommand(ReadOnlySpan<byte> payload)
+    {
+        if (payload.Length < 3) return;
+        _qscQuest = (ushort)(payload[0] | (payload[1] << 8));
+        _qscCommand = payload[2];
+        _qscPending = true;
+    }
+
     public void OnServerPacket(PluginPacketContext ctx)
     {
         var p = ctx.Packet;
         var payload = p.Payload.ToArray();
+
+        // Watch what the server asks the client to run. The 2026 client answers some of these with
+        // NC_QUEST_JOBDUNGEON_FIND_RNG instead of an ack, and the ack has to carry this command back.
+        if (p.Opcode == Op.QuestScriptCmdReq) NoteQuestScriptCommand(payload);
 
         switch (p.Opcode)
         {

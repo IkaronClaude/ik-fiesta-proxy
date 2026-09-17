@@ -69,6 +69,17 @@ internal static class Op
     public const ushort CharacterList = 0x1c07;
     public const ushort RegenMover = 0x1c1a;
     /// <summary>NC_QUEST_JOBDUNGEON_FIND_RNG: 2 bytes from the 2026 client, 115 in the 2016 build.</summary>
+    public const ushort QuestScriptCmdReq = 0x4401;   // S->C: the server asks the client to run a script command
+    public const ushort QuestScriptCmdAck = 0x4402;   // C->S: {u16 nQuestID, u8 nQSC, u32 nResult}
+    public const int QuestScriptCmdAckSize = 7;
+
+    // S->C, two bytes, a quest id. The 2026 server sends it at both ends of a dialogue script and the
+    // client closes the dialogue window on it. Every one of the 43 in OfficialUS2.pcapng carries
+    // 0xFFFF - the zone sentinel for "no quest" - so the packet reads as "the quest script context is
+    // now none". The 2016 server never sends it (0 in Full.pcapng, AbandonQuest.pcapng, JCQ.pcapng),
+    // which is why the 2026 client leaves the window open on our stack.
+    public const ushort QuestCurrentScript = 0x442e;
+    public static readonly byte[] QuestCurrentScriptNone = { 0xff, 0xff };
     public const ushort QuestJobDungeonFindRng = 0x441f;
     public const int QuestJobDungeonFindRng2016Size = 115;
 
