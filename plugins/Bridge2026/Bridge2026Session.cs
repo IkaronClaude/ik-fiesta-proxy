@@ -172,6 +172,15 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
+        // Logging out / back to character select. Same one-byte payload, different number - see Opcodes.
+        // Only outside the login stage: there the client has not got far enough to log out of anything.
+        if (p.Opcode == Op.C26NormalLogout && !_isLoginStage && payload.Length == 1)
+        {
+            ctx.Replace(new FiestaPacket(Op.NormalLogout16, payload));
+            _plugin.Log($"[{_info.ServiceName}] 0x0C15 -> NC_USER_NORMALLOGOUT_CMD (type {payload[0]})");
+            return;
+        }
+
         // Answered here, never relayed: the 2016 server has no equivalent and hangs up on the opcode.
         if (p.Opcode == Op.C26Back)
         {

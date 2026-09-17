@@ -111,6 +111,17 @@ internal static class Op
     /// <summary>Sent mid-login and after create/erase. NC_USER_NORMALLOGOUT_CMD / CREATE_OTP_REQ in 2016.</summary>
     public const ushort C26MidLogin = 0x0c18;
     public const ushort C26PostCreate = 0x0c35;
+    /// <summary>
+    /// The 2026 client's NC_USER_NORMALLOGOUT_CMD: one byte of LogoutType, sent on the world-manager AND the
+    /// zone link five seconds after NC_CHAR_LOGOUTREADY_CMD (0x1071). 01 = back to character select.
+    /// In the 2016 build that opcode is NC_USER_LOGINWORLDFAIL_ACK, a SERVER->client message, so the zone
+    /// asserts "Invalid protocol[3/21]" and both servers hang up: returning to character select
+    /// disconnected the player (seen in the zone log from 2026-09-16 on). 2016 calls it 0x0C18, which the
+    /// 2026 client in turn uses for something else (C26MidLogin). OfficialUS2.pcapng shows the same
+    /// 1071 -> 0C15 {01} against the real server, answered with the avatar list.
+    /// </summary>
+    public const ushort C26NormalLogout = 0x0c15;
+    public const ushort NormalLogout16 = 0x0c18;
 
     /// <summary>Map a reference (German) USER opcode into this session's numbering.</summary>
     public static ushort U(ushort op, int shift)
