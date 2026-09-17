@@ -442,6 +442,31 @@ internal sealed class Bridge2026Session : IPluginSession
                 return;
 
             // Counted record lists: the count widens to u32 and the records take their 2026 widths.
+            case Op.SellItemList or Op.GuildStorageOpen or Op.BoothSearchItemList when IsUsBuild && _plugin.HasItemClasses:
+            {
+                var (countAt, itemAt) = p.Opcode switch
+                {
+                    Op.GuildStorageOpen => (18, 3),
+                    Op.BoothSearchItemList => (2, 15),
+                    _ => (0, 3),
+                };
+                if (ItemAttr.RecordList2016To2026(payload, countAt, itemAt, _plugin.ClassOf, out var why) is { } list)
+                    ctx.Replace(list);
+                else
+                    _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4} not translated: {why}");
+                return;
+            }
+            case Op.SellItemInsert or Op.TradeOppositUpboard or Op.CollectCardOpen when _plugin.HasItemClasses:
+            {
+                var at = p.Opcode switch { Op.SellItemInsert => 2, Op.TradeOppositUpboard => 1, _ => 3 };
+                if (ItemAttr.LeadingItem2016To2026(payload, at, _plugin.ClassOf) is { } one)
+                {
+                    if (!one.AsSpan().SequenceEqual(payload)) ctx.Replace(one);
+                }
+                else
+                    _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4}: item not translated ({payload.Length} B)");
+                return;
+            }
             case Op.RewardInvenAck or Op.MenuOpenStorage when IsUsBuild && _plugin.HasItemClasses:
             {
                 var countAt = p.Opcode == Op.MenuOpenStorage ? 11 : 0;

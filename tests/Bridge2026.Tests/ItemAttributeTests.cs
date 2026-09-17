@@ -255,4 +255,44 @@ public class ItemAttributeTests
         ItemAttr.RecordList2016To2026(p, 0, ClassOf, out var why).ShouldBeNull();
         why.ShouldNotBeNull();
     }
+
+    // ------------------------------------------------------------------ the rest of the family
+
+    private const string Opts453 = "09" + "09CC00" + "07BE00" + "0EB400" + "0A6000";   // count + 4 options
+
+    [Fact]
+    public void A_booth_record_keeps_its_fifteen_byte_head_and_grows_by_one()
+    {
+        var head15 = "01000000" + "2200" + "1027000000000000";          // item handle, owner, price 10000
+        var rec = "29" + head15 + "C501" + "000000000000000000000000" + Opts453;       // size byte: 41 = 14 head + 2 id + 25 attr
+        var p = Convert.FromHexString("0000" + "01" + rec);
+
+        var outp = ItemAttr.RecordList2016To2026(p, 2, 15, ClassOf, out var why);
+
+        why.ShouldBeNull();
+        Convert.ToHexString(outp!).ShouldBe("0000" + "01000000"
+            + "2A" + head15 + "C501" + "000000000000000000000000" + "00" + Opts453 + "00000000");
+    }
+
+    [Fact]
+    public void A_trimmed_single_item_grows_by_one()
+    {
+        var p = Convert.FromHexString("0700" + "C501" + "000000000000000000000000" + Opts453);   // buyback insert, handle 7
+        Convert.ToHexString(ItemAttr.LeadingItem2016To2026(p, 2, ClassOf)!)
+            .ShouldBe("0700" + "C501" + "000000000000000000000000" + "00" + Opts453);
+    }
+
+    [Fact]
+    public void A_full_size_single_item_keeps_its_size()
+    {
+        // the 2016 struct is 103 bytes whatever the item uses; the card packet is 106 B on both wires
+        var used = "C501" + "000000000000000000000000" + Opts453;                      // 27 bytes
+        var pad = new string('E', (103 - 27) * 2);
+        var p = Convert.FromHexString("0000" + "01" + used + pad);
+
+        var outp = ItemAttr.LeadingItem2016To2026(p, 3, ClassOf)!;
+
+        outp.Length.ShouldBe(106);
+        Convert.ToHexString(outp).ShouldStartWith("0000" + "01" + "C501" + "000000000000000000000000" + "00" + Opts453);
+    }
 }
