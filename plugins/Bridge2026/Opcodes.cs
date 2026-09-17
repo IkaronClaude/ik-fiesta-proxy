@@ -61,6 +61,10 @@ internal static class Op
     public const ushort QuestDoing = 0x103a;
     public const ushort QuestRepeat = 0x10d7;
     public const ushort ClientItem = 0x1047;
+    /// <summary>{exchange u16, location u16, item}: an item moved, stacked, picked up or dropped.</summary>
+    public const ushort ItemCellChange = 0x3001;
+    /// <summary>{exchange u16, location u8, item}: an item equipped or taken off.</summary>
+    public const ushort ItemEquipChange = 0x3002;
     public const ushort ChargedBuff = 0x104a;
     public const ushort RewardInvenAck = 0x302d;
     public const ushort RegenMob = 0x1c08;

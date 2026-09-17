@@ -155,6 +155,31 @@ internal static class ItemAttr
         return outp.ToArray();
     }
 
+    /// <summary>
+    /// A packet whose LAST field is one item - {itemid u16, attributes} with no size byte, running to the end -
+    /// with that item in the 2026 shape. <paramref name="at"/> is where the item id starts; everything before
+    /// it is copied unchanged. Null when the record translator refuses (unmeasured class, unexpected width),
+    /// and the caller then relays the original.
+    ///
+    /// NC_ITEM_CELLCHANGE_CMD, NC_ITEM_EQUIPCHANGE_CMD and the other single-item packets carry exactly the
+    /// inventory record minus its size byte and location, so this wraps the item as such a record and runs
+    /// it through <see cref="Record2016To2026"/>: one rule for every packet.
+    /// </summary>
+    public static byte[]? TrailingItem2016To2026(byte[] p, int at, Func<int, int> classOf)
+    {
+        var body = p.Length - at;                               // itemid + attributes
+        if (body < 2 || body + RecordHead - 2 > 255) return null;
+        var rec = new byte[body + RecordHead - 2];              // size byte, a 2-byte location, then the body
+        rec[0] = (byte)(rec.Length - 1);
+        Array.Copy(p, at, rec, RecordHead - 2, body);
+        var t = Record2016To2026(rec, 0, rec.Length, classOf);
+        if (t is null) return null;
+        var outp = new byte[at + t.Length - (RecordHead - 2)];
+        Array.Copy(p, 0, outp, 0, at);
+        Array.Copy(t, RecordHead - 2, outp, at, t.Length - (RecordHead - 2));
+        return outp;
+    }
+
     private static byte[] Slice(byte[] src, int at, int len)
     {
         var outp = new byte[len];

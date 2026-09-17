@@ -402,6 +402,23 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(lc);
                 return;
 
+            // One item at the end of the packet. Relayed untouched, an enchantable item (armour, weapon, ...) is
+            // one byte short and the 2026 client reads its option list out of place: hovering such an item
+            // after moving it crashed the client in the tooltip builder (2026-09-17, item 453).
+            case Op.ItemCellChange or Op.ItemEquipChange when _plugin.HasItemClasses:
+            {
+                var at = p.Opcode == Op.ItemCellChange ? 4 : 3;
+                if (ItemAttr.TrailingItem2016To2026(payload, at, _plugin.ClassOf) is { } moved)
+                {
+                    if (moved.Length != payload.Length) ctx.Replace(moved);
+                }
+                else if (payload.Length > at + 2)
+                    _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4}: item {BitConverter.ToUInt16(payload, at)} "
+                                 + $"(class {_plugin.ClassOf(BitConverter.ToUInt16(payload, at))}) not translated, "
+                                 + $"{payload.Length - at - 2} attribute bytes");
+                return;
+            }
+
             case Op.ClientItem:
             {
                 // Translate the RECORDS, not just the header. The 2026 client sizes each record from the

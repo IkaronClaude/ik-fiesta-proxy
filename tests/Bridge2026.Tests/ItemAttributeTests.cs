@@ -18,7 +18,7 @@ public class ItemAttributeTests
 
     private static int ClassOf(int itemId) => itemId switch
     {
-        64610 or 64611 => Helmet,      // IblisHelmet, IblisArmor
+        64610 or 64611 or 453 => Helmet,  // IblisHelmet, IblisArmor, IblisHelmet_SD
         64599 => Weapon,               // IblisAxe
         64612 or 64613 => Boots,       // IblisPants, IblisBoots (class 8)
         31000 => 26,                   // House_MushRoom, a constant-width class
@@ -179,5 +179,47 @@ public class ItemAttributeTests
         var a = new byte[length];
         a[countAt] = count;
         return a;
+    }
+
+    // ------------------------------------------------------------------ one item at the end of a packet
+
+    // NC_ITEM_CELLCHANGE_CMD exactly as our zone sent it at 14:09:20 on 2026-09-17, one second before the
+    // 2026 client crashed hovering this helmet (IblisHelmet_SD, 453, class 6, four enchant options).
+    private static readonly byte[] CellChange453 = Convert.FromHexString(
+        "0D240D24" + "C501" + "000000000000000000000000" + "09" + "09CC00" + "07BE00" + "0EB400" + "0A6000");
+
+    [Fact]
+    public void The_crashing_cell_change_gets_the_2026_byte_before_the_enchant_count()
+    {
+        var outp = ItemAttr.TrailingItem2016To2026(CellChange453, 4, ClassOf);
+
+        outp.ShouldNotBeNull();
+        Convert.ToHexString(outp!).ShouldBe(
+            "0D240D24" + "C501" + "000000000000000000000000" + "00" + "09" + "09CC00" + "07BE00" + "0EB400" + "0A6000");
+        (outp.Length - 6).ShouldBe(ItemAttr.Width2026(Helmet, outp.AsSpan(6)));   // what the client will read
+    }
+
+    [Fact]
+    public void Equip_change_has_a_one_byte_location_and_the_same_rule()
+    {
+        var equip = Convert.FromHexString("0D2415" + "C501" + "000000000000000000000000" + "00");  // no options
+
+        var outp = ItemAttr.TrailingItem2016To2026(equip, 3, ClassOf);
+
+        Convert.ToHexString(outp!).ShouldBe("0D2415" + "C501" + "000000000000000000000000" + "00" + "00");
+        outp!.Length.ShouldBe(19);                          // the official 2026 0x3002 for a helmet is 19 B
+    }
+
+    [Fact]
+    public void An_emptied_slot_passes_through()
+    {
+        var empty = Convert.FromHexString("15200324" + "FFFF");     // official: 15 20 03 24 ff ff
+        Convert.ToHexString(ItemAttr.TrailingItem2016To2026(empty, 4, ClassOf)!).ShouldBe("15200324FFFF");
+    }
+
+    [Fact]
+    public void An_item_of_unknown_class_is_refused_not_guessed()
+    {
+        ItemAttr.TrailingItem2016To2026(Convert.FromHexString("0D240D24" + "3930" + "0000"), 4, ClassOf).ShouldBeNull();
     }
 }
