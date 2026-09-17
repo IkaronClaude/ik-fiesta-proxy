@@ -8,7 +8,10 @@ param(
     # replies, so it has to be the LAN address, never 127.0.0.1.
     [string]$Advertise = "172.25.164.128",
     [string]$Server    = "127.0.0.1",
-    [switch]$PacketLog = $true
+    [switch]$PacketLog = $true,
+    # For a client patched with client-2026-npc-dialog-self-close: stop sending it 0x442E after each
+    # quest-page ack, so the patch is what is being tested and not the bridge.
+    [switch]$NoDialogClose
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +44,7 @@ $env:PROXY_ROUTES  = ("19010:Login:${Server}:9010:bridge;" +
 $env:PUBLIC_IP     = $Advertise
 $env:XOR_TABLE_PATH = "C:/Projects/ik-fiesta-bots/xor-table.hex"
 $env:PROXY_PACKET_LOG = if ($PacketLog) { "1" } else { "0" }
+$env:BRIDGE2026_CLOSE_DIALOG = if ($NoDialogClose) { "0" } else { "1" }
 
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_LOGIN_PORT  = "19010"
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_ADVERTISE   = $Advertise

@@ -35,6 +35,12 @@ internal sealed class Bridge2026Session : IPluginSession
     // path answers with NC_ACT_ENDOFTRADE_CMD, which a 2016 client closing the same window never sends,
     // so that one frame is swallowed. Timestamped so a close that produced no ENDOFTRADE (the window
     // was already hidden) cannot eat a later, genuine one from a shop.
+    // BRIDGE2026_CLOSE_DIALOG=0 turns the 442E off, for a client carrying the
+    // client-2026-npc-dialog-self-close recipe (ik-fiesta-patch-recipes), which closes its own dialog the
+    // way a 2016 client does. On by default: an unmodified 2026 client needs it.
+    private static readonly bool CloseDialogForClient =
+        Environment.GetEnvironmentVariable("BRIDGE2026_CLOSE_DIALOG") != "0";
+
     private long _closeSentAt = long.MinValue;
     private const int CloseEchoWindowMs = 1500;
 
@@ -105,7 +111,7 @@ internal sealed class Bridge2026Session : IPluginSession
         // the client acks a page, forward the ack and hand the client a 442E. If the script has another
         // page, the SAY reopens the window exactly as it does for a 2016 client; if it has not, the
         // window is simply closed. No script knowledge, no last-page detection, no timer.
-        if (p.Opcode == Op.QuestScriptCmdAck)
+        if (p.Opcode == Op.QuestScriptCmdAck && CloseDialogForClient)
         {
             ctx.ToClient(Op.QuestCloseDialog, Op.QuestCloseDialogPayload);
             _closeSentAt = Environment.TickCount64;
