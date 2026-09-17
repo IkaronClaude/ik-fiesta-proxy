@@ -10,6 +10,8 @@ internal static class Program
     {
         var config = ProxyConfig.FromEnvironment();
         Net.PacketLog.Enabled = config.PacketLogEnabled;
+        if (int.TryParse(Environment.GetEnvironmentVariable("PROXY_PACKET_LOG_BYTES"), out var logBytes) && logBytes >= 0)
+            Net.PacketLog.MaxBytes = logBytes;
         Log.Info($"FiestaProxy starting.");
         Log.Info($"  packet log: {(config.PacketLogEnabled ? "ENABLED (PROXY_PACKET_LOG=1)" : "off — set PROXY_PACKET_LOG=1 to enable per-frame trace")}");
         Log.Info($"  upstream connect attempt timeout: {config.UpstreamConnectTimeout.TotalSeconds:N0}s (listeners health-gate on first reachability)");
