@@ -41,6 +41,21 @@ internal static class T
     /// capture and nothing downstream refers back to it, so one captured token is replayed.</summary>
     public static readonly byte[] BackAck2026 =
         Concat(FromHex("581e"), Encoding.ASCII.GetBytes("af97e90b50aefbba3419d7ec7ef98cd4"));
+
+    /// <summary>The same reply carrying a ticket of our own; the captured one when we have none to give
+    /// (the client then fails its re-login exactly as it did before tickets were honoured).</summary>
+    public static byte[] BackAck(string? ticket)
+        => ticket is { Length: 32 } ? Concat(FromHex("581e"), Encoding.ASCII.GetBytes(ticket)) : BackAck2026;
+
+    /// <summary>The re-login ticket in the first 32 bytes of a 2026 login, or null for an ordinary login
+    /// (all zeros there). A ticket is 32 lowercase hex characters.</summary>
+    public static string? LoginTicket(byte[] login2026)
+    {
+        if (login2026.Length < 32 || login2026[0] == 0) return null;
+        for (var i = 0; i < 32; i++)
+            if (!Uri.IsHexDigit((char)login2026[i])) return null;
+        return Encoding.ASCII.GetString(login2026, 0, 32);
+    }
     public static readonly byte[] CreateOpenHead = FromHex("398e");
     /// <summary>Last two bytes of the US build's empty reward-inventory frame.</summary>
     public static readonly byte[] RewardInvenTail = FromHex("3f41");

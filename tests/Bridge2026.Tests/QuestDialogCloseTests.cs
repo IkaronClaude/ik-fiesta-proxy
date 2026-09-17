@@ -1,3 +1,4 @@
+using System.Linq;
 using Bridge2026;
 using FiestaLibReloaded.Networking;
 using FiestaProxy.Plugins;
@@ -141,5 +142,58 @@ public class QuestDialogCloseTests
         // on a zone link 0x0C1A is not ours to reinterpret
         var onZone = FromClient(ZoneSession(plugin), Op.C26AvatarListReq, 0x3F);
         (onZone.Forwarded?.Opcode ?? 0).ShouldNotBe(Op.AvatarListReq16);
+    }
+
+    // ---- "select server": the bridge issues the re-login ticket, so the bridge redeems it ----
+
+    private static Bridge2026Session LoginSession(Bridge2026Plugin plugin, string client = "10.0.0.2:50000")
+        => new(plugin, new PluginSessionInfo("Login", plugin.LoginPort, "127.0.0.1", 9010, client, "10.0.0.1:19010"));
+
+    private static byte[] Login2026(string? ticket, string user)
+    {
+        var p = new byte[349];
+        if (ticket is not null) System.Text.Encoding.ASCII.GetBytes(ticket).CopyTo(p, 0);
+        System.Text.Encoding.ASCII.GetBytes(user).CopyTo(p, 32);
+        return p;
+    }
+
+    private static string UserOf(PluginPacketContext ctx)
+    {
+        var body = ctx.ExtraToServer.First(x => x.Opcode == Op.Login16).Payload.ToArray();
+        return System.Text.Encoding.ASCII.GetString(body, 0, 18).TrimEnd((char)0);
+    }
+
+    [Fact]
+    public void Select_server_relogin_is_redeemed_with_the_credentials_the_client_first_used()
+    {
+        var plugin = new Bridge2026Plugin();
+        UserOf(FromClient(LoginSession(plugin), Op.C26Login, Login2026(null, "test2026"))).ShouldBe("test2026");
+
+        var wm = new Bridge2026Session(plugin,
+            new PluginSessionInfo("WorldManager_0", 19013, "127.0.0.1", 9013, "10.0.0.2:50001", "10.0.0.1:19013"));
+        var back = FromClient(wm, Op.C26Back);
+        var ack = back.ExtraToClient.Single(x => x.Opcode == Op.C26BackAck).Payload.ToArray();
+        var ticket = System.Text.Encoding.ASCII.GetString(ack, 2, 32);
+        ticket.ShouldNotBe("af97e90b50aefbba3419d7ec7ef98cd4");          // not the replayed capture any more
+
+        // the client comes back on a NEW connection (new port) with the ticket and an empty body
+        var relogin = FromClient(LoginSession(plugin, "10.0.0.2:50099"), Op.C26Login, Login2026(ticket, ""));
+        UserOf(relogin).ShouldBe("test2026");
+
+        // single use
+        UserOf(FromClient(LoginSession(plugin, "10.0.0.2:50100"), Op.C26Login, Login2026(ticket, ""))).ShouldBe("");
+    }
+
+    [Fact]
+    public void A_ticket_is_worthless_from_another_address()
+    {
+        var plugin = new Bridge2026Plugin();
+        FromClient(LoginSession(plugin), Op.C26Login, Login2026(null, "test2026"));
+        var wm = new Bridge2026Session(plugin,
+            new PluginSessionInfo("WorldManager_0", 19013, "127.0.0.1", 9013, "10.0.0.2:50001", "10.0.0.1:19013"));
+        var ack = FromClient(wm, Op.C26Back).ExtraToClient.Single(x => x.Opcode == Op.C26BackAck).Payload.ToArray();
+        var ticket = System.Text.Encoding.ASCII.GetString(ack, 2, 32);
+
+        UserOf(FromClient(LoginSession(plugin, "10.9.9.9:40000"), Op.C26Login, Login2026(ticket, ""))).ShouldBe("");
     }
 }
