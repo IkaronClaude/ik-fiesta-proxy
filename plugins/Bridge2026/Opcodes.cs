@@ -122,6 +122,16 @@ internal static class Op
     /// </summary>
     public const ushort C26NormalLogout = 0x0c15;
     public const ushort NormalLogout16 = 0x0c18;
+    /// <summary>
+    /// "Send me the character list again" - the second half of going back to character select, sent on the
+    /// world-manager link straight after the logout above. 2026 numbers it 0x0C1A (one byte, 3F in
+    /// OfficialUS2.pcapng, answered there with the avatar list 0x0C0F); 2016 calls 0x0C1A
+    /// NC_USER_CONNECTCUT2WORLDMANAGER_CMD and has the request as 0x0C1F NC_USER_AVATAR_LIST_REQ, an empty
+    /// struct handled by CParserClient::fc_NC_USER_AVATAR_LIST_REQ. Its answer is the 2016 avatar list
+    /// (0x0C14), which OnServerPacket already turns into the 2026 one.
+    /// </summary>
+    public const ushort C26AvatarListReq = 0x0c1a;
+    public const ushort AvatarListReq16 = 0x0c1f;
 
     /// <summary>Map a reference (German) USER opcode into this session's numbering.</summary>
     public static ushort U(ushort op, int shift)

@@ -181,6 +181,14 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
+        if (p.Opcode == Op.C26AvatarListReq && !_isLoginStage && payload.Length == 1
+            && _info.ServiceName.StartsWith("WorldManager", StringComparison.Ordinal))
+        {
+            ctx.Replace(new FiestaPacket(Op.AvatarListReq16, payload));
+            _plugin.Log($"[{_info.ServiceName}] 0x0C1A -> NC_USER_AVATAR_LIST_REQ");
+            return;
+        }
+
         // Answered here, never relayed: the 2016 server has no equivalent and hangs up on the opcode.
         if (p.Opcode == Op.C26Back)
         {

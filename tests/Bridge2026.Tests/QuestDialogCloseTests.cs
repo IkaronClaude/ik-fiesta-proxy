@@ -127,4 +127,19 @@ public class QuestDialogCloseTests
         ctx.Forwarded!.Opcode.ShouldBe(Op.NormalLogout16);
         ctx.Forwarded.Payload.ToArray().ShouldBe(new byte[] { 0x01 });
     }
+
+    [Fact]
+    public void The_2026_avatar_list_request_is_renumbered_on_the_world_manager_link_only()
+    {
+        var plugin = new Bridge2026Plugin();
+        var wm = new Bridge2026Session(plugin,
+            new PluginSessionInfo("WorldManager_0", 19013, "127.0.0.1", 9013, "10.0.0.2:50001", "10.0.0.1:19013"));
+
+        var onWm = FromClient(wm, Op.C26AvatarListReq, 0x3F);
+        onWm.Forwarded!.Opcode.ShouldBe(Op.AvatarListReq16);
+
+        // on a zone link 0x0C1A is not ours to reinterpret
+        var onZone = FromClient(ZoneSession(plugin), Op.C26AvatarListReq, 0x3F);
+        (onZone.Forwarded?.Opcode ?? 0).ShouldNotBe(Op.AvatarListReq16);
+    }
 }
