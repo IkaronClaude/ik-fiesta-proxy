@@ -65,13 +65,16 @@ internal static class Op
     public const ushort ItemCellChange = 0x3001;
     /// <summary>{exchange u16, location u8, item}: an item equipped or taken off.</summary>
     public const ushort ItemEquipChange = 0x3002;
-    /// <summary>{cen u64, maxpage u8, curpage u8, opentype u8, count, records}: a storage page.</summary>
+    /// <summary>{cen u64, maxpage u8, curpage u8, opentype u8, count, records}: a storage page. Header confirmed on the
+    /// official wire 2026-09-18: 8 frames, count u32 at 11, pages 0..3 of a maximum of 16.</summary>
     public const ushort MenuOpenStorage = 0x3c08;
     // The rest of the item-record family (tickets.md P0). Headers read out of the 2026 handlers:
     //   0x305B  buyback list        count u32 at 0 (0x740C10: mov ebx,[edi]; add edi,4)
     //   0x7492  guild storage       count u32 at 18 (0x73F5B0: mov esi,[edx+0x12]; lea edi,[edx+0x16])
-    //   0x986E  academy rewards     count u32 at 10 (0x840B10: mov eax,[edx+0xa]; lea edi,[edx+0xe]); the
-    //                               department is NOT renumbered - its switch (0x595BE6) takes 69, 6A, 6E as 2016 does
+    //   0x986E  academy rewards     count u32 at 10 (0x840B10: mov eax,[edx+0xa]; lea edi,[edx+0xe]); CONFIRMED on the
+    //                               official wire 2026-09-18 (live-20260918-075442): a 980 B frame walks all 125 records
+    //                               out exactly, 0 bytes left. The department is NOT renumbered - its switch (0x595BE6)
+    //                               takes 69, 6A, 6E as 2016 does
     //   0x6814  booth search        count u32 at 2, records from 6, item id 15 into each (0x65A8F0)
     //   0x305C  buyback insert      {handle u16, item at 2} (0x740D10)
     //   0x4C10  trade, other side   {slot u8, item at 1} (case 0x5938D1)
