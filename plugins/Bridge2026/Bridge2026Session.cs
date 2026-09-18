@@ -442,11 +442,13 @@ internal sealed class Bridge2026Session : IPluginSession
                 return;
 
             // Counted record lists: the count widens to u32 and the records take their 2026 widths.
-            case Op.SellItemList or Op.GuildStorageOpen or Op.BoothSearchItemList when IsUsBuild && _plugin.HasItemClasses:
+            case Op.SellItemList or Op.GuildStorageOpen or Op.BoothSearchItemList or Op.AcademyRewardStorageOpen
+                when IsUsBuild && _plugin.HasItemClasses:
             {
                 var (countAt, itemAt) = p.Opcode switch
                 {
                     Op.GuildStorageOpen => (18, 3),
+                    Op.AcademyRewardStorageOpen => (10, 3),
                     Op.BoothSearchItemList => (2, 15),
                     _ => (0, 3),
                 };

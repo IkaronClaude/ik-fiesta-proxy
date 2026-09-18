@@ -249,6 +249,21 @@ public class ItemAttributeTests
     }
 
     [Fact]
+    public void The_academy_reward_storage_keeps_err_and_cen_and_widens_the_count_at_ten()
+    {
+        // 2026 parser 0x840B10: cen at 2, count as a dword at 10, records from 14
+        var head = "D817" + "80841E0000000000";
+        var helmet = "1D" + "0024" + "C501" + "000000000000000000000000" + "09" + "09CC00" + "07BE00" + "0EB400" + "0A6000";
+        var p = Convert.FromHexString(head + "01" + helmet);
+
+        var outp = ItemAttr.RecordList2016To2026(p, 10, ClassOf, out var why);
+
+        why.ShouldBeNull();
+        Convert.ToHexString(outp!).ShouldStartWith(head + "01000000" + "1E" + "0024" + "C501");
+        outp!.Length.ShouldBe(10 + 4 + 31 + 4);
+    }
+
+    [Fact]
     public void A_list_with_an_untranslatable_record_is_refused_whole()
     {
         var p = Convert.FromHexString("01" + "06" + "0024" + "3930" + "00" + "00");   // item 12345, class unknown

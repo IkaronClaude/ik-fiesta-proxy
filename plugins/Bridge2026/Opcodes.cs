@@ -70,6 +70,8 @@ internal static class Op
     // The rest of the item-record family (tickets.md P0). Headers read out of the 2026 handlers:
     //   0x305B  buyback list        count u32 at 0 (0x740C10: mov ebx,[edi]; add edi,4)
     //   0x7492  guild storage       count u32 at 18 (0x73F5B0: mov esi,[edx+0x12]; lea edi,[edx+0x16])
+    //   0x986E  academy rewards     count u32 at 10 (0x840B10: mov eax,[edx+0xa]; lea edi,[edx+0xe]); the
+    //                               department is NOT renumbered - its switch (0x595BE6) takes 69, 6A, 6E as 2016 does
     //   0x6814  booth search        count u32 at 2, records from 6, item id 15 into each (0x65A8F0)
     //   0x305C  buyback insert      {handle u16, item at 2} (0x740D10)
     //   0x4C10  trade, other side   {slot u8, item at 1} (case 0x5938D1)
@@ -80,6 +82,7 @@ internal static class Op
     public const ushort TradeOppositUpboard = 0x4c10;
     public const ushort BoothSearchItemList = 0x6814;
     public const ushort GuildStorageOpen = 0x7492;
+    public const ushort AcademyRewardStorageOpen = 0x986e;
     public const ushort CollectCardOpen = 0xc407;
     public const ushort ChargedBuff = 0x104a;
     public const ushort RewardInvenAck = 0x302d;
