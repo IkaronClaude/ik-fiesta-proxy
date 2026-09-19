@@ -43,7 +43,7 @@ internal static class Program
 
         var tasks = new List<Task>();
         foreach (var r in config.Routes)
-            tasks.Add(new ProxyListener(r, config, plugins).RunAsync(cts.Token));
+            tasks.Add(Watch(new ProxyListener(r, config, plugins).RunAsync(cts.Token), r.ServiceName, r.ListenPort));
         foreach (var r in config.S2sRoutes)
             tasks.Add(new S2sListener(r, config.S2sAllowedCidrs, config.UpstreamConnectTimeout).RunAsync(cts.Token));
 
@@ -51,4 +51,15 @@ internal static class Program
         catch (OperationCanceledException) { }
         return 0;
     }
+
+    // Task.WhenAll reports a fault only after EVERY task has finished, and listeners run for ever - so a
+    // listener that dies is otherwise never reported, and its port just stays closed. Say it the moment it
+    // happens.
+    private static Task Watch(Task listener, string service, int port) =>
+        listener.ContinueWith(t =>
+        {
+            if (t.IsFaulted)
+                Log.Error($"[{service}] listener on :{port} DIED - its port is closed until restart: " +
+                          t.Exception?.GetBaseException());
+        }, TaskScheduler.Default);
 }
