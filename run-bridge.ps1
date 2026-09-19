@@ -8,6 +8,8 @@ param(
     # replies, so it has to be the LAN address, never 127.0.0.1.
     [string]$Advertise = "172.25.164.128",
     [string]$Server    = "127.0.0.1",
+    # The C->S cipher table (BYO - this repo ships none). Also read from $env:XOR_TABLE_PATH.
+    [string]$XorTable  = $(if ($env:XOR_TABLE_PATH) { $env:XOR_TABLE_PATH } else { "C:/Projects/ik-fiesta-bots/xor-table.hex" }),
     [switch]$PacketLog = $true,
     # Payload bytes shown per logged frame. 0 = the whole packet, which is what a bridge under test wants;
     # pass 48 to get the old short lines back on a busy zone.
@@ -45,7 +47,8 @@ $env:PROXY_ROUTES  = ("19010:Login:${Server}:9010:bridge;" +
                       "19025:Zone_0_3:${Server}:9025:bridge;" +
                       "19028:Zone_0_4:${Server}:9028:bridge")
 $env:PUBLIC_IP     = $Advertise
-$env:XOR_TABLE_PATH = "C:/Projects/ik-fiesta-bots/xor-table.hex"
+if (-not (Test-Path $XorTable)) { throw "XOR table not found at $XorTable - pass -XorTable <path> (bring your own)" }
+$env:XOR_TABLE_PATH = $XorTable
 $env:PROXY_PACKET_LOG = if ($PacketLog) { "1" } else { "0" }
 $env:PROXY_PACKET_LOG_BYTES = "$PacketLogBytes"
 $env:BRIDGE2026_CLOSE_DIALOG = if ($NoDialogClose) { "0" } else { "1" }
