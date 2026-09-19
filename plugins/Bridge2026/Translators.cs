@@ -250,12 +250,40 @@ internal static class T
         => p.Length < 3 ? null : Concat(Slice(p, 0, 1), new byte[3], Slice(p, 1));
 
     /// <summary>
-    /// CHARGEDBUFF {count u16} -> a 6-byte head carrying that count at OFFSET 4, then 22-byte entries.
-    /// Measured 94 = 6 + 4*22 and 28 = 6 + 1*22, with `00 00 00 00 04 00` for four buffs. A non-empty 2016
-    /// list is refused: our server has only ever sent the empty form, so the entry layout is unmeasured.
+    /// CHARGEDBUFF, the login-time list of charged effects (inventory/storage expansions, the void inventory,
+    /// every time-limited item effect):
+    ///     2016  {count u16}                       then count x 14 B {key u32, handle u16, use u32, end u32}
+    ///     2026  {u32 = 0, count u16 at OFFSET 4}  then count x 22 B: the same 14 bytes, then 8 zero bytes
+    ///
+    /// Measured in every official 0x104A in every capture, German and US alike: all of them are exactly
+    /// 6 + 22*n. The void character's list reads key 5/6/9 handle 920 and key 35 handle 7750 (the Void
+    /// Inventory item), each followed by 8 zero bytes, and both dates are packed exactly as ours are - a
+    /// permanent end date is `FF EC BB 76` on both sides - so the 14 bytes carry over unchanged.
+    ///
+    /// THIS USED TO REFUSE ANY NON-EMPTY LIST, because only the empty form had been seen. A refused
+    /// translation falls through and the 2016 bytes reach the client as they are, where the 2026 layout
+    /// reads them as nothing - so every charged effect vanished at each login while the zone still held all
+    /// of them. Seen 2026-09-19: three Iron Cases saved and applied server-side, zero in the client's list,
+    /// and a fourth refused because the zone knew about the other three.
+    ///
+    /// Official also sends a second 0x104A per login whose u32 head is 1, with 0-1 entries; what that list
+    /// is has not been worked out. The 2016 server sends only this one, which is the head-0 list.
     /// </summary>
+    public const int ChargedBuffRecord2016 = 14, ChargedBuffRecord2026 = 22, ChargedBuffHead2026 = 6;
+
     public static byte[]? ChargedBuff2016To2026(byte[] p)
-        => p.Length != 2 || p[0] != 0 || p[1] != 0 ? null : new byte[6];
+    {
+        if (p.Length < 2) return null;
+        int n = p[0] | (p[1] << 8);
+        if (p.Length != 2 + n * ChargedBuffRecord2016) return null;      // not the shape we measured: leave it
+        var outp = new byte[ChargedBuffHead2026 + n * ChargedBuffRecord2026];
+        outp[4] = p[0];
+        outp[5] = p[1];
+        for (int i = 0; i < n; i++)
+            Array.Copy(p, 2 + i * ChargedBuffRecord2016, outp, ChargedBuffHead2026 + i * ChargedBuffRecord2026,
+                       ChargedBuffRecord2016);                           // the trailing 8 bytes stay zero
+        return outp;
+    }
 
     /// <summary>
     /// NC_ITEM_REWARDINVENOPEN_ACK: our 2016 server sends 2 bytes, the US client reads 8. THIS WAS THE
