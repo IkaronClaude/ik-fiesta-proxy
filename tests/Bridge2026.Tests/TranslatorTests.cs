@@ -192,7 +192,36 @@ public class TranslatorTests
         // 94 = 6 + 4*22 and 28 = 6 + 1*22 in the capture; padding the 2016 pair on the right was both two
         // bytes short and put the count in the wrong field.
         T.ChargedBuff2016To2026(new byte[2])!.Length.ShouldBe(6);
-        T.ChargedBuff2016To2026(new byte[] { 1, 0 }).ShouldBeNull();
+        T.ChargedBuff2016To2026(new byte[] { 1, 0 }).ShouldBeNull();   // claims a record it does not carry
+    }
+
+    [Fact]
+    public void Charged_buff_entries_widen_from_14_to_22_bytes()
+    {
+        // Our 2016 zone's real login frame, 2026-09-19: three permanent Iron Cases (handle 827 = 0x033B),
+        // keys 0/1/2, end date 2255-12-31 packed as FF EC BB 76. This used to be refused and passed through
+        // untranslated, and the client showed an empty list while the zone held all three.
+        var p16 = Hex(("03 00" +
+                      " 00 00 00 00 3B 03 1A 69 42 4C FF EC BB 76" +
+                      " 01 00 00 00 3B 03 1A 69 42 64 FF EC BB 76" +
+                      " 02 00 00 00 3B 03 1A 69 4A 26 FF EC BB 76").Replace(" ", ""));
+
+        var p26 = T.ChargedBuff2016To2026(p16)!;
+
+        p26.Length.ShouldBe(6 + 3 * 22);                         // the official shape: 94 = 6 + 4*22
+        p26[..4].ShouldBe(new byte[4]);                          // head u32 0, as the official buff list
+        (p26[4] | (p26[5] << 8)).ShouldBe(3);                    // count at offset 4
+        for (int i = 0; i < 3; i++)
+        {
+            p26.AsSpan(6 + i * 22, 14).ToArray().ShouldBe(p16.AsSpan(2 + i * 14, 14).ToArray());
+            p26.AsSpan(6 + i * 22 + 14, 8).ToArray().ShouldBe(new byte[8]);   // official tails are zero
+        }
+    }
+
+    [Fact]
+    public void Charged_buff_of_the_wrong_length_is_left_alone()
+    {
+        T.ChargedBuff2016To2026(new byte[] { 2, 0, 1, 2, 3 }).ShouldBeNull();
     }
 
     // ---------------------------------------------------------------- misc
