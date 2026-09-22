@@ -6,8 +6,8 @@
 # the zone compares against, and cross-checked against the merged client tree. Regenerate
 # whenever those tables are rebuilt: a stale entry makes the client report at zone enter
 # that it "has been illegally manipulated".
-2667922d726861481bab726e9f1dd76c
-21a58a05f4db8eb1e87bd32bd0324d2e
+9b4403c1e374934f99125ebbca293e47
+f9cd2266d0883e975fab8f5af378e942
 50c256fb4452a5d22abb823c71ee3833
 601ae679d49ab8ea0b268deef330b7bf
 9d868d43ca4d62631bcc620d8945dbd2
@@ -22,7 +22,7 @@ f42ba96a8754463303161cdb4465556e
 512810c868c8eac2162114e79be76902
 ab893ad719d4d8f17c133a369a1b5ccc
 16fd3fb91178f0d1a4166efdc796394f
-731f34675af880954b74e935fc1e3eba
+b6673e4446da6218264218e5d6a622ad
 7eba90b1cb40a6afc7a4994f3b382c1e
 6e7abb51320d720b8b37ffb46ecd08c9
 759f396a08ab86e1724d6c8be804901a
