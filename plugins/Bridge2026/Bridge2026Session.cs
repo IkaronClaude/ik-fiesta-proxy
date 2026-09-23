@@ -190,6 +190,29 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
+        // 0x0C23 {inner opcode u16, inner payload}: the 2026 client's INSTANT logout to character select, used when
+        // it leaves the world for the beauty shop (senders Fiesta.exe 0x57F3DE / 0x58072A: no LOGOUTREADY countdown,
+        // the zone link gets the logout command wrapped, the world-manager link the plain 0x0C15). Seen live
+        // 2026-09-23 as 0x0C23 {15 0C 01}. The 2016 build reads 0x0C23 as NC_USER_REGISENUMBER_REQ, so the zone
+        // never logged the character out, the world manager kept PlayingCharNo, and re-entering from character
+        // select failed with CHAR_LOGINFAIL 0x0145 ("map is under maintenance") until a full relog.
+        // Unwrapped into the 2016 NC_USER_NORMALLOGOUT_CMD, exactly what the countdown path sends.
+        if (p.Opcode == Op.C26WrappedCmd && !_isLoginStage && payload.Length >= 2)
+        {
+            var inner = BitConverter.ToUInt16(payload, 0);
+            if (inner == Op.C26NormalLogout && payload.Length == 3)
+            {
+                ctx.Replace(new FiestaPacket(Op.NormalLogout16, new[] { payload[2] }));
+                _plugin.Log($"[{_info.ServiceName}] 0x0C23 {{0x0C15}} -> NC_USER_NORMALLOGOUT_CMD (type {payload[2]}, instant logout)");
+            }
+            else
+            {
+                ctx.Drop();
+                _plugin.Warn($"[{_info.ServiceName}] 0x0C23 wraps 0x{inner:X4} ({payload.Length - 2} B): no translation, dropped");
+            }
+            return;
+        }
+
         if (p.Opcode == Op.C26AvatarListReq && !_isLoginStage && payload.Length == 1
             && _info.ServiceName.StartsWith("WorldManager", StringComparison.Ordinal))
         {
