@@ -295,13 +295,29 @@ internal sealed class Bridge2026Session : IPluginSession
         var payload = p.Payload.ToArray();
 
         // A 0x4401 whose STRUCT_QSC.Command is QSC_END (1): this zone tells its clients when a script ends.
-        // Relayed untouched - case 1 of the 2026 On_NC_QUEST_SCRIPT_CMD_REQ (Fiesta.exe 0x5B4645) is
-        // CloseWin(NpcDialogWin) - and remembered, so the per-ack close stops for this zone.
+        // Remembered, so the per-ack close stops for this zone - and NOT relayed: it becomes a 0x442E.
+        //
+        // Official never sends QSC_END (OfficialUS2.pcapng: every script, after its last SAY / ACCEPT / DONE,
+        // ends with 0x442E and the client answers ENDOFTRADE). The two close the window differently in the
+        // 2026 client. Case 1 of On_NC_QUEST_SCRIPT_CMD_REQ (0x5B4645) is a bare CloseWin(NpcDialogWin). The
+        // 442E handler goes through NpcDialogWin close (0x72B1B0), which also re-shows the HUD group the quest
+        // dialog hid (tail: find window [0xCE49E4] -> 0x5867A0(1)). A relayed END left the skill bar, the
+        // bottom icons and chat hidden until relog (operator, 2026-09-23).
+        // The ENDOFTRADE that close sends is swallowed like the per-ack one: a 2016 client closed on END via
+        // CloseWin and sent nothing, so the 2016 zone never saw it there.
         if (p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
-            && BitConverter.ToUInt32(payload, 2) == Op.QscEnd
-            && _plugin.ZoneAnnouncesQuestEnd.TryAdd(_info.ServiceName, true))
+            && BitConverter.ToUInt32(payload, 2) == Op.QscEnd)
         {
-            _plugin.Log($"[{_info.ServiceName}] zone announces quest script END: per-ack 0x442E off for this zone");
+            if (_plugin.ZoneAnnouncesQuestEnd.TryAdd(_info.ServiceName, true))
+                _plugin.Log($"[{_info.ServiceName}] zone announces quest script END: per-ack 0x442E off for this zone");
+            if (CloseDialogForClient)
+            {
+                ctx.Drop();
+                ctx.ToClient(Op.QuestCloseDialog, Op.QuestCloseDialogPayload);
+                _closeSentAt = Environment.TickCount64;
+                _plugin.Log($"[{_info.ServiceName}] quest {BitConverter.ToUInt16(payload, 0)} script END -> 0x442E (restores the HUD)");
+                return;
+            }
         }
 
         // The world manager's answer to "select server": {nError, sOTP[32]}, the same 34 bytes the 2026 client
