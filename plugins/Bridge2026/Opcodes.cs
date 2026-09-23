@@ -167,6 +167,8 @@ internal static class Op
     /// 1071 -> 0C15 {01} against the real server, answered with the avatar list.
     /// </summary>
     public const ushort C26NormalLogout = 0x0c15;
+    /// <summary>2026 "instant" logout: {inner opcode u16, inner payload} = a wrapped 0x0C15. NC_USER_REGISENUMBER_REQ in 2016.</summary>
+    public const ushort C26WrappedCmd = 0x0c23;
     public const ushort NormalLogout16 = 0x0c18;
     /// <summary>
     /// "Send me the character list again" - the second half of going back to character select, sent on the
