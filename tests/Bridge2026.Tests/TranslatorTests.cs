@@ -382,16 +382,17 @@ public class TranslatorTests
     // ---------------------------------------------------------------- quests, shops, character list
 
     [Fact]
-    public void A_quest_entry_widens_its_five_mob_counts_to_u16()
+    public void A_quest_entry_keeps_its_32_bytes_and_gets_five_zero_bytes()
     {
-        // A doing entry off the fighter fixture: its third mob count is 3, the rest zero.
+        // A doing entry off the fighter fixture: count slot 1 (+25) is 3, the rest zero. The official EU wire
+        // (Official1.pcapng) keeps the counters as BYTES at 24 - quest 552 reads 153/180 at +25 - so nothing moves.
         var q16 = Hex("180008f1377a6a000000009a397a6a0000000001000000000003000000000000");
         var outp = T.QuestDoing2016To2026(Concat(Hex("cd0b00000101"), q16))!;
 
         outp.Length.ShouldBe(6 + 37);
-        outp.AsSpan(6, 24).ToArray().ShouldBe(q16[..24]);                          // head unchanged
-        outp.AsSpan(30, 10).ToArray().ShouldBe(new byte[] { 0, 0, 3, 0, 0, 0, 0, 0, 0, 0 });
-        outp.AsSpan(40, 3).ToArray().ShouldBe(q16[29..32]);                        // flags and time follow
+        outp.AsSpan(6, 32).ToArray().ShouldBe(q16);                                // the 2016 entry, unchanged
+        outp[6 + 25].ShouldBe((byte)3);                                            // its count (slot 1, +25) stays put
+        outp.AsSpan(6 + 32, 5).ToArray().ShouldBe(new byte[5]);
     }
 
     [Fact]
