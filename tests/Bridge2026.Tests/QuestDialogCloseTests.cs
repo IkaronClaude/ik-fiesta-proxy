@@ -93,8 +93,11 @@ public class QuestDialogCloseTests
         var plugin = new Bridge2026Plugin();
         var s = ZoneSession(plugin);
 
+        // END itself is replaced by 0x442E (d0637e2): the 2026 client restores its HUD only on 442E
         var end = FromServer(s, Op.QuestScriptCmdReq, ScriptCmd(20135, Op.QscEnd));
-        end.Forwarded.ShouldNotBeNull();                                   // the client closes on it by itself
+        end.Forwarded.ShouldBeNull();
+        end.ExtraToClient.Count.ShouldBe(1);
+        end.ExtraToClient[0].Opcode.ShouldBe(Op.QuestCloseDialog);
 
         var ack = FromClient(s, Op.QuestScriptCmdAck, 0xA7, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00);
         ack.Forwarded.ShouldNotBeNull();
