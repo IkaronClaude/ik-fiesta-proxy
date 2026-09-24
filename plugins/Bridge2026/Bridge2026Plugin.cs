@@ -30,6 +30,7 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     private string _advertise = "";
     private int _portOffset;
     private Dictionary<int, int>? _itemClass;
+    private Dictionary<(int Quest, int Index), int>? _rewardSlot;
 
     public string Name => "bridge2026";
 
@@ -92,6 +93,27 @@ public sealed class Bridge2026Plugin : IProxyPlugin
                       + "equipment past the first slot will not appear");
         }
 
+        if (s.TryGetValue("QUEST_REWARD_INDEX", out var qr) && File.Exists(qr))
+        {
+            var map = new Dictionary<(int, int), int>();
+            foreach (var line in File.ReadAllLines(qr))
+            {
+                var t = line.Trim();
+                if (t.Length == 0 || t[0] == '#') continue;
+                var f = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (f.Length == 3 && int.TryParse(f[0], out var q) && int.TryParse(f[1], out var i)
+                    && int.TryParse(f[2], out var slot))
+                    map[(q, i)] = slot;
+            }
+            _rewardSlot = map;
+            host.Info($"{Name}: {map.Count} quest reward choices from {qr}");
+        }
+        else
+        {
+            host.Warn($"{Name}: no QUEST_REWARD_INDEX file - a chosen quest reward reaches the zone as the client's index "
+                      + "and the player gets a different item");
+        }
+
         if (s.TryGetValue("OPCODES", out var op) && File.Exists(op))
         {
             try
@@ -152,6 +174,12 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     /// stack with some zones patched and some not is right on both.
     /// </summary>
     public System.Collections.Concurrent.ConcurrentDictionary<string, bool> ZoneAnnouncesQuestEnd { get; } = new();
+
+    /// <summary>
+    /// The 2016 QUEST_DATA.Reward slot for the 2026 client's reward index (its QuestReward row order), or -1.
+    /// </summary>
+    public int RewardSlot(int quest, int index)
+        => _rewardSlot is not null && _rewardSlot.TryGetValue((quest, index), out var s) ? s : -1;
 
     /// <summary>The item's attribute class, or -1 when it is unknown or no table was supplied.</summary>
     public int ClassOf(int itemId)

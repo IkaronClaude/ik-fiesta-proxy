@@ -109,6 +109,18 @@ public class QuestDialogCloseTests
     }
 
     [Fact]
+    public void A_script_that_stops_at_DONE_still_closes_the_2026_dialog()
+    {
+        // "Mischievous Monsters" (quest 10, 2026-09-24): reward given (QSC_DONE), no END after it; the 2026
+        // window only closes after 0x442E, so Continue did nothing.
+        var s = ZoneSession();
+        var done = FromServer(s, Op.QuestScriptCmdReq, ScriptCmd(10, Op.QscDone));
+        done.Forwarded.ShouldNotBeNull();                                  // DONE itself is relayed
+        done.ExtraToClient.Count.ShouldBe(1);
+        done.ExtraToClient[0].Opcode.ShouldBe(Op.QuestCloseDialog);
+    }
+
+    [Fact]
     public void A_dialogue_page_is_not_mistaken_for_an_END()
     {
         var plugin = new Bridge2026Plugin();
