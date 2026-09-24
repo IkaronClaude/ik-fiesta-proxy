@@ -378,16 +378,15 @@ internal static class T
     // ------------------------------------------------------------------ quests, shops, character list
 
     /// <summary>
-    /// PLAYER_QUEST_INFO 32 B -> 37 B: the five End_NPCMobCount bytes at 24 are u16 on the 2026 wire.
-    /// Everything around them is unchanged - id, status, StartTime, EndTime, RepeatCount, ProgressStep
-    /// before, the flags byte and End_RunningTimeSec after.
+    /// PLAYER_QUEST_INFO 32 B -> 37 B: the 32 bytes are the SAME in 2026 and 5 zero bytes follow.
+    /// Measured on the official EU wire (Official1.pcapng, 36 quests): the kill counters are still the five
+    /// End_NPCMobCount BYTES at 24 - quest 552 reads 153 of its 180 kills at +25 (slot 1, the kill objective;
+    /// slot 0 is the talk NPC), 2530 reads 36 of 40 - and bytes 29-36 are zero in every entry. The earlier
+    /// reading "the counters are u16 on the 2026 wire" put slot 1 at +26 = the client's slot 2: every partly
+    /// done quest showed 0/N after a relog (operator 2026-09-24, Buzzel 0/30).
     /// </summary>
     private static void QuestEntry2016To2026(byte[] src, int at, byte[] dst, int to)
-    {
-        Array.Copy(src, at, dst, to, 24);
-        for (var i = 0; i < 5; i++) dst[to + 24 + i * 2] = src[at + 24 + i];
-        Array.Copy(src, at + 29, dst, to + 34, 3);
-    }
+        => Array.Copy(src, at, dst, to, 32);
 
     /// <summary>CLIENT_QUEST_DOING {chrregnum u32, flag u8, count u8} + entries.</summary>
     public static byte[]? QuestDoing2016To2026(byte[] p)
