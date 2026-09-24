@@ -41,6 +41,102 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     /// <summary>-1 to relay the 2016 status untouched. 0-5 make the client refuse the world outright.</summary>
     public int WorldStatusOverride { get; private set; } = -1;
 
+    // The three files tools/bridge_data.py writes (zone checksums, item classes, quest reward choices). They are
+    // re-read whenever that script rewrites them - a data deploy regenerates them (Fiesta2026on2016's volume sync
+    // does it on every sync), so the bridge can never keep old checksums after the zones' tables changed (the
+    // "Client has been illegally manipulated" drift, 2026-09-23). A file caught mid-write keeps the old values.
+    private IReadOnlyDictionary<string, string> _settings = new Dictionary<string, string>();
+    private FileSystemWatcher? _watcher;
+    private System.Threading.Timer? _reloadTimer;
+
+    private void LoadGenerated()
+    {
+        var host = _host!;
+        var s = _settings;
+            if (s.TryGetValue("CHECKSUMS", out var cs) && File.Exists(cs))
+            {
+                // Each checksum goes on the wire as the 32 ASCII characters of an MD5 hex digest, NOT as the
+                // 16 bytes they encode: MAP_LOGIN_REQ is 22 + 49 * 32 = 1590 bytes. Decoding them here would
+                // halve the packet and the zone would refuse it.
+                var sums = new List<byte[]>();
+                foreach (var line in File.ReadAllLines(cs))
+                {
+                    var t = line.Trim();
+                    if (t.Length == 0 || t.StartsWith('#')) continue;
+                    if (t.Length != 32)
+                    {
+                        host.Warn($"{Name}: skipping a {t.Length}-character checksum in {cs}; each must be 32 hex characters");
+                        continue;
+                    }
+                    sums.Add(System.Text.Encoding.ASCII.GetBytes(t));
+                }
+                if (sums.Count == 49 || Checksums.Count == 0) Checksums = sums;   // never swap in a half-written file
+                host.Info($"{Name}: {sums.Count} zone checksums from {cs}"
+                          + (sums.Count == 49 ? "" : " -- the 2016 zone expects exactly 49"));
+            }
+
+            if (s.TryGetValue("ITEM_CLASSES", out var ic) && File.Exists(ic))
+            {
+                var map = new Dictionary<int, int>();
+                foreach (var line in File.ReadAllLines(ic))
+                {
+                    var t = line.AsSpan().Trim();
+                    if (t.Length == 0 || t[0] == '#') continue;
+                    var sp = t.IndexOf(' ');
+                    if (sp > 0 && int.TryParse(t[..sp], out var id) && int.TryParse(t[(sp + 1)..], out var cls))
+                        map[id] = cls;
+                }
+                _itemClass = map;
+                host.Info($"{Name}: {map.Count} item classes from {ic}");
+            }
+            else
+            {
+                host.Warn($"{Name}: no ITEM_CLASSES file, so inventory records are relayed untranslated and "
+                          + "equipment past the first slot will not appear");
+            }
+
+            if (s.TryGetValue("QUEST_REWARD_INDEX", out var qr) && File.Exists(qr))
+            {
+                var map = new Dictionary<(int, int), int>();
+                foreach (var line in File.ReadAllLines(qr))
+                {
+                    var t = line.Trim();
+                    if (t.Length == 0 || t[0] == '#') continue;
+                    var f = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (f.Length == 3 && int.TryParse(f[0], out var q) && int.TryParse(f[1], out var i)
+                        && int.TryParse(f[2], out var slot))
+                        map[(q, i)] = slot;
+                }
+                _rewardSlot = map;
+                host.Info($"{Name}: {map.Count} quest reward choices from {qr}");
+            }
+            else
+            {
+                host.Warn($"{Name}: no QUEST_REWARD_INDEX file - a chosen quest reward reaches the zone as the client's index "
+                          + "and the player gets a different item");
+            }
+    }
+
+    private void WatchGenerated()
+    {
+        var dirs = new[] { "CHECKSUMS", "ITEM_CLASSES", "QUEST_REWARD_INDEX" }
+            .Select(k => _settings.TryGetValue(k, out var f) ? Path.GetDirectoryName(Path.GetFullPath(f)) : null)
+            .Where(d => d != null && Directory.Exists(d)).Distinct().ToList();
+        if (dirs.Count != 1) return;                   // bridge_data writes all three into one folder
+        _reloadTimer = new System.Threading.Timer(_ =>
+        {
+            try { LoadGenerated(); }
+            catch (Exception ex) { _host!.Warn($"{Name}: reloading the generated files failed ({ex.Message}); keeping the old values"); }
+        });
+        _watcher = new FileSystemWatcher(dirs[0]) { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size };
+        FileSystemEventHandler kick = (_, _) => _reloadTimer.Change(1000, System.Threading.Timeout.Infinite);   // debounce the burst
+        _watcher.Changed += kick;
+        _watcher.Created += kick;
+        _watcher.Renamed += (o, e) => kick(o, e);
+        _watcher.EnableRaisingEvents = true;
+        _host!.Info($"{Name}: watching {dirs[0]} - the generated files reload when bridge_data.py rewrites them");
+    }
+
     public void Initialise(PluginHostContext host)
     {
         _host = host;
@@ -51,68 +147,9 @@ public sealed class Bridge2026Plugin : IProxyPlugin
         if (s.TryGetValue("ADVERTISE", out var adv)) _advertise = adv;
         if (s.TryGetValue("WORLD_STATUS", out var ws) && int.TryParse(ws, out var wsv)) WorldStatusOverride = wsv;
 
-        if (s.TryGetValue("CHECKSUMS", out var cs) && File.Exists(cs))
-        {
-            // Each checksum goes on the wire as the 32 ASCII characters of an MD5 hex digest, NOT as the
-            // 16 bytes they encode: MAP_LOGIN_REQ is 22 + 49 * 32 = 1590 bytes. Decoding them here would
-            // halve the packet and the zone would refuse it.
-            var sums = new List<byte[]>();
-            foreach (var line in File.ReadAllLines(cs))
-            {
-                var t = line.Trim();
-                if (t.Length == 0 || t.StartsWith('#')) continue;
-                if (t.Length != 32)
-                {
-                    host.Warn($"{Name}: skipping a {t.Length}-character checksum in {cs}; each must be 32 hex characters");
-                    continue;
-                }
-                sums.Add(System.Text.Encoding.ASCII.GetBytes(t));
-            }
-            Checksums = sums;
-            host.Info($"{Name}: {sums.Count} zone checksums from {cs}"
-                      + (sums.Count == 49 ? "" : " -- the 2016 zone expects exactly 49"));
-        }
-
-        if (s.TryGetValue("ITEM_CLASSES", out var ic) && File.Exists(ic))
-        {
-            var map = new Dictionary<int, int>();
-            foreach (var line in File.ReadAllLines(ic))
-            {
-                var t = line.AsSpan().Trim();
-                if (t.Length == 0 || t[0] == '#') continue;
-                var sp = t.IndexOf(' ');
-                if (sp > 0 && int.TryParse(t[..sp], out var id) && int.TryParse(t[(sp + 1)..], out var cls))
-                    map[id] = cls;
-            }
-            _itemClass = map;
-            host.Info($"{Name}: {map.Count} item classes from {ic}");
-        }
-        else
-        {
-            host.Warn($"{Name}: no ITEM_CLASSES file, so inventory records are relayed untranslated and "
-                      + "equipment past the first slot will not appear");
-        }
-
-        if (s.TryGetValue("QUEST_REWARD_INDEX", out var qr) && File.Exists(qr))
-        {
-            var map = new Dictionary<(int, int), int>();
-            foreach (var line in File.ReadAllLines(qr))
-            {
-                var t = line.Trim();
-                if (t.Length == 0 || t[0] == '#') continue;
-                var f = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                if (f.Length == 3 && int.TryParse(f[0], out var q) && int.TryParse(f[1], out var i)
-                    && int.TryParse(f[2], out var slot))
-                    map[(q, i)] = slot;
-            }
-            _rewardSlot = map;
-            host.Info($"{Name}: {map.Count} quest reward choices from {qr}");
-        }
-        else
-        {
-            host.Warn($"{Name}: no QUEST_REWARD_INDEX file - a chosen quest reward reaches the zone as the client's index "
-                      + "and the player gets a different item");
-        }
+        _settings = s;
+        LoadGenerated();
+        WatchGenerated();
 
         if (s.TryGetValue("OPCODES", out var op) && File.Exists(op))
         {
