@@ -107,6 +107,8 @@ internal static class Op
     public const ushort QuestScriptCmdReq = 0x4401;   // S->C: the server asks the client to run a script command
     public const ushort QuestScriptCmdAck = 0x4402;   // C->S: {u16 nQuestID, u8 nQSC, u32 nResult}
     public const int QuestScriptCmdAckSize = 7;
+    public const uint QscDone = 10;                     // STRUCT_QSC.Command: DONE, the reward was given
+    public const ushort QuestRewardSelect = 0x4411;      // NC_QUEST_REWARD_SELECT_ITEM_INDEX_CMD {quest u16, index u32}
     public const uint QscEnd = 1;                       // STRUCT_QSC.Command: the script reached END
 
     // S->C. "Close the NPC dialog": the 2026 handler (Fiesta.exe 0x5B4BE0) sets g_C319D5 and calls

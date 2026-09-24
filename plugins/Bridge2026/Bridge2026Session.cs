@@ -116,6 +116,25 @@ internal sealed class Bridge2026Session : IPluginSession
         // window is simply closed. No script knowledge, no last-page detection, no timer.
         // ...unless this zone has shown it announces the end of a script itself (see OnServerPacket): then
         // the window must stay open between pages, and its own QSC_END closes it after the last one.
+        // NC_QUEST_REWARD_SELECT_ITEM_INDEX_CMD {quest u16, index u32}: the 2026 client counts its own QuestReward rows
+        // (items first), the 2016 zone reads a QUEST_DATA.Reward slot (EXP and money first) - relayed as it was, a
+        // mage choosing Magic Boots got the cleric's Litany Boots (operator 2026-09-24).
+        if (p.Opcode == Op.QuestRewardSelect && payload.Length == 6)
+        {
+            var quest = BitConverter.ToUInt16(payload, 0);
+            var index = (int)BitConverter.ToUInt32(payload, 2);
+            var slot = _plugin.RewardSlot(quest, index);
+            if (slot >= 0 && slot != index)
+            {
+                var moved = (byte[])payload.Clone();
+                BitConverter.TryWriteBytes(moved.AsSpan(2), (uint)slot);
+                ctx.Replace(moved);
+            }
+            _plugin.Log($"[{_info.ServiceName}] quest {quest} reward choice: client index {index} -> slot {slot}"
+                        + (slot < 0 ? " (NOT in the map, relayed as is)" : ""));
+            return;
+        }
+
         if (p.Opcode == Op.QuestScriptCmdAck && CloseDialogForClient
             && !_plugin.ZoneAnnouncesQuestEnd.ContainsKey(_info.ServiceName))
         {
@@ -328,6 +347,18 @@ internal sealed class Bridge2026Session : IPluginSession
         // bottom icons and chat hidden until relog (operator, 2026-09-23).
         // The ENDOFTRADE that close sends is swallowed like the per-ack one: a 2016 client closed on END via
         // CloseWin and sent nothing, so the 2016 zone never saw it there.
+        // QSC_DONE (the reward was given): a script may stop there with no END after it, and the 2026 dialog then
+        // never closes - Continue did nothing on "Mischievous Monsters" (operator 2026-09-24). The client only
+        // closes after 0x442E, so DONE is relayed and followed by one.
+        if (p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
+            && BitConverter.ToUInt32(payload, 2) == Op.QscDone && CloseDialogForClient)
+        {
+            ctx.ToClient(Op.QuestCloseDialog, Op.QuestCloseDialogPayload);
+            _closeSentAt = Environment.TickCount64;
+            _plugin.Log($"[{_info.ServiceName}] quest {BitConverter.ToUInt16(payload, 0)} script DONE -> 0x442E");
+            return;
+        }
+
         if (p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
             && BitConverter.ToUInt32(payload, 2) == Op.QscEnd)
         {

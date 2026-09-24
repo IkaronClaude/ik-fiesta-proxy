@@ -58,6 +58,7 @@ $env:FIESTAPROXY_PLUGIN_BRIDGE2026_ADVERTISE   = $Advertise
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_PORT_OFFSET = "10000"
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_CHECKSUMS   = "$root/deploy/bridge2026/zone-checksums.txt"
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_ITEM_CLASSES = "$root/deploy/bridge2026/item-classes.txt"
+$env:FIESTAPROXY_PLUGIN_BRIDGE2026_QUEST_REWARD_INDEX = "$root/deploy/bridge2026/quest-reward-index.txt"
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_OPCODES     = "$root/lib/FiestaLib-Reloaded/docs/extracted/merged/all-enums.json"
 
 Push-Location $run
