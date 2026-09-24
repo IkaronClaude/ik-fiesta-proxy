@@ -368,7 +368,12 @@ internal sealed class Bridge2026Session : IPluginSession
                 var err = payload.Length >= 2 ? payload[0] | (payload[1] << 8) : -1;
                 _plugin.Warn($"[{_info.ServiceName}] the 2016 Login REFUSED the account: err={err} (0x{err:X4}). " +
                              "This is the server rejecting the credentials, not the bridge.");
-                return;                                   // relayed so the client stops waiting
+                // The 2026 login scene has no case for cmd 9: relayed as it was, the client ignored it and only saw
+                // the close ("wrong pw => disconnected with no error message", operator 2026-09-24). Its fail case
+                // is cmd 7, same {err u16}: GetErrMsg(err) in a modal box, then it closes the link itself.
+                ctx.Drop();
+                ctx.ToClient(U(Op.C26LoginFail), payload);
+                return;
             }
 
             case Op.LoginAck16 when _isLoginStage:
