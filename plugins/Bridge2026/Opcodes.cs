@@ -29,6 +29,11 @@ internal static class Op
     public const ushort C26Ack1 = 0x0c40;
     public const ushort C26Ack2 = 0x0c47;
     public const ushort C26WorldList = 0x0c06;
+    /// <summary>
+    /// Login refused, {err u16}: the 2026 login scene's USER case 7 (Fiesta.exe dispatch 0x553B55, table 0x553F34,
+    /// case 0x553CFD) shows GetErrMsg(err) (0x4BDBB0 - 69 = "Please check ID or Password.") and closes. 2016 = 0x0c09.
+    /// </summary>
+    public const ushort C26LoginFail = 0x0c07;
     public const ushort C26Challenge = 0x0c3e;
     public const ushort C26WillSelect = 0x0c34;
     public const ushort C26ChallengeAnswer = 0x0c3f;
