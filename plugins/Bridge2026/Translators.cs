@@ -286,6 +286,25 @@ internal static class T
     }
 
     /// <summary>
+    /// NC_CHARGED_BUFFSTART_CMD (0x9003, a charged item just used): 2016 sends one bare 14-byte
+    /// PROTO_CHARGEDBUFF_INFO; the 2026 handler (Fiesta.exe 0x5B6EA0) reads a u32 at +14 - the first of the
+    /// 8 bytes the 2026 record carries (see <see cref="ChargedBuff2016To2026"/>) - and on NON-ZERO files the
+    /// buff in its second list (0x8172F0) instead of the normal one (0x816570). Relayed raw, that u32 was read
+    /// past the end of our payload, so used buffs landed in the wrong list or nowhere: "none of these buffs
+    /// show up in the charged effect list" (operator 2026-09-24). Pad with the same 8 zero bytes.
+    /// </summary>
+    public static byte[]? ChargedBuffStart2016To2026(byte[] p)
+        => p.Length != ChargedBuffRecord2016 ? null : Concat(p, new byte[ChargedBuffRecord2026 - ChargedBuffRecord2016]);
+
+    /// <summary>
+    /// NC_CHARGED_BUFFTERMINATE_CMD (0x9004): 2016 {key u32}; the 2026 handler (0x5B6F60) also reads a byte at
+    /// +4 that picks the same list as above (1 = the second list, 0x817370; else the normal one, 0x8165F0).
+    /// Our buffs are all in the normal list: append 0.
+    /// </summary>
+    public static byte[]? ChargedBuffTerminate2016To2026(byte[] p)
+        => p.Length != 4 ? null : Concat(p, new byte[1]);
+
+    /// <summary>
     /// NC_ITEM_REWARDINVENOPEN_ACK: our 2016 server sends 2 bytes, the US client reads 8. THIS WAS THE
     /// ZONE-ENTER CRASH. The client requests it at zone enter and walks it as a count-prefixed list, reading
     /// a u32 count from offset 0; with a 2-byte payload two of those bytes come from past the end. Four

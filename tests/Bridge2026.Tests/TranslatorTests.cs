@@ -224,6 +224,27 @@ public class TranslatorTests
         T.ChargedBuff2016To2026(new byte[] { 2, 0, 1, 2, 3 }).ShouldBeNull();
     }
 
+    [Fact]
+    public void Buff_start_gets_the_2026_records_eight_zero_bytes()
+    {
+        // Our zone's real 0x9003, 2026-09-24: key 5, handle 10133 (0x2795, Gold Dragon's Grace T8), permanent.
+        // The 2026 handler branches on the u32 at +14; raw it read past our payload's end.
+        var p16 = Hex("050000009527" + "1A096B00" + "FFECBB76");
+        var p26 = T.ChargedBuffStart2016To2026(p16)!;
+        p26.Length.ShouldBe(22);
+        p26[..14].ShouldBe(p16);
+        p26[14..].ShouldBe(new byte[8]);
+        T.ChargedBuffStart2016To2026(new byte[13]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void Buff_terminate_gets_the_list_byte_zero()
+    {
+        var p26 = T.ChargedBuffTerminate2016To2026(new byte[] { 5, 0, 0, 0 })!;
+        p26.ShouldBe(new byte[] { 5, 0, 0, 0, 0 });
+        T.ChargedBuffTerminate2016To2026(new byte[5]).ShouldBeNull();
+    }
+
     // ---------------------------------------------------------------- misc
 
     [Fact]
