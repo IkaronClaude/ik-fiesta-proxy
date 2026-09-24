@@ -1,6 +1,6 @@
 # item id -> attribute class, from the 2026 US client ItemInfo.shn Class column.
 # The client picks each inventory record attribute block by this value, so the bridge needs it
-# to know how wide a record is. 23092 items.
+# to know how wide a record is. 23114 items.
 0 8
 1 8
 2 6
@@ -20488,6 +20488,28 @@
 59044 29
 59045 29
 59046 29
+60000 0
+60001 0
+60002 0
+60003 0
+60004 0
+60005 0
+60006 0
+60007 0
+60008 0
+60009 0
+60010 0
+60011 0
+60012 0
+60013 0
+60014 0
+60015 0
+60016 0
+60017 0
+60018 0
+60019 0
+60020 0
+60021 0
 61000 34
 61001 34
 61002 34

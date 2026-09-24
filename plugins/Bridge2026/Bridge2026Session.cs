@@ -480,6 +480,14 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(cbf);
                 return;
 
+            case Op.ChargedBuffStart when T.ChargedBuffStart2016To2026(payload) is { } cbs:
+                ctx.Replace(cbs);
+                return;
+
+            case Op.ChargedBuffTerminate when T.ChargedBuffTerminate2016To2026(payload) is { } cbt:
+                ctx.Replace(cbt);
+                return;
+
             // Counted record lists: the count widens to u32 and the records take their 2026 widths.
             case Op.SellItemList or Op.GuildStorageOpen or Op.BoothSearchItemList or Op.AcademyRewardStorageOpen
                 when IsUsBuild && _plugin.HasItemClasses:

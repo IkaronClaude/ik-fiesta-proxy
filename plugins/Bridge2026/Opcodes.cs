@@ -90,6 +90,8 @@ internal static class Op
     public const ushort AcademyRewardStorageOpen = 0x986e;
     public const ushort CollectCardOpen = 0xc407;
     public const ushort ChargedBuff = 0x104a;
+    public const ushort ChargedBuffStart = 0x9003;        // NC_CHARGED_BUFFSTART_CMD
+    public const ushort ChargedBuffTerminate = 0x9004;    // NC_CHARGED_BUFFTERMINATE_CMD
     public const ushort RewardInvenAck = 0x302d;
     public const ushort RegenMob = 0x1c08;
     public const ushort MobCmd = 0x1c09;
