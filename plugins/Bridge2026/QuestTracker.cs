@@ -1,82 +1,45 @@
-using System.Text.Json;
+using System.Buffers.Binary;
 
 namespace Bridge2026;
 
 /// <summary>
-/// The 2026 client's QUEST TRACKER (patch 10.5.0, 06/10/2026: "Active quests can now be marked"), kept by the bridge
-/// because the 2016 zone has no such thing. Read off the official wire (live-20260919-201932, 22 requests):
-///   C-&gt;S 0x441F {u16 quest}                 track this quest - sent on every quest accept and by the "start
-///                                             tracking" button (2016 numbers it NC_QUEST_JOBDUNGEON_FIND_RNG, a zone
-///                                             RING packet, so the zone must never see it)
-///   S-&gt;C 0x4420 {u16 result, u16 quest}     0x30B0 tracked; 0x30B5 answered to repeats of a tracked quest; 0x30B4
-///                                             refusals (quests finished before the request landed)
-///   S-&gt;C 0x110F 5 x {u16 quest}             the tracked set at every zone login, 0xFFFF = empty slot (the limit)
-///   C-&gt;S 0x4421 {u16 quest}                 stop tracking (the button; seen on our stack 2026-09-25)
-///   S-&gt;C 0x4422 {u16 0x30B8, u16 quest}     removed - also sent UNASKED after a tracked quest's reward
-///                                             (official: 0x4401 QSC_DONE, 0x442E, 0x4422 - six times in that capture)
-/// Official drops a quest from the set once it is no longer in progress; so does this store, by the login quest list.
-/// State is one small JSON file: character number -&gt; quest ids.
+/// The 2026 client's QUEST TRACKER (patch 10.5.0, 06/10/2026: "Active quests can now be marked"). Read off the
+/// official wire (live-20260919-201932) and our stack (2026-09-25):
+///   C-&gt;S 0x441F {u16 quest}                 track - sent on every quest accept and by the "start tracking" button
+///   S-&gt;C 0x4420 {u16 result, u16 quest}     0x30B0 tracked; 0x30B5 already tracked; 0x30B4 refused
+///   C-&gt;S 0x4421 {u16 quest}                 stop tracking (the button)
+///   S-&gt;C 0x4422 {u16 0x30B8, u16 quest}     removed - also sent unasked after a tracked quest's reward
+///   S-&gt;C 0x110F 5 x {u16 quest}             the tracked set at every zone login, 0xFFFF = empty slot
+/// The set belongs to the CHARACTER (operator 2026-09-25): the zone plugin quest_track (ik-fiesta-patch-recipes) answers
+/// 0x441F / 0x4421 and keeps a TRACKED bit in each quest record (PLAYER_QUEST_INFO +0x1D, bit 7, a bitfield byte whose
+/// other bits the zone preserves), which the zone's own character save writes to tQuest.sData. The bridge only
+/// translates: it reads the bits off the login DOING list for 0x110F and strips them from what the 2026 client gets.
 /// </summary>
-internal sealed class QuestTracker
+internal static class QuestTracker
 {
     public const int Slots = 5;
-    public const ushort Tracked = 0x30B0, Refused = 0x30B4, AlreadyTracked = 0x30B5, Removed = 0x30B8;
+    public const int RecordSize = 32, RecordStatus = 2, RecordFlags = 0x1D;
+    public const byte TrackedBit = 0x80;
 
-    private readonly string? _path;
-    private readonly object _lock = new();
-    private Dictionary<uint, List<ushort>> _byChar = new();
-
-    public QuestTracker(string? path)
+    /// <summary>A 2016 quest DOING list {chrregnum u32, needClear u8, count u8, 32-byte records}: add the tracked
+    /// quests to <paramref name="tracked"/> (emptied first when needClear is set), clear the bit in
+    /// <paramref name="payload"/> and return the set so far.</summary>
+    public static List<ushort> TakeTracked(byte[] payload, List<ushort> tracked)
     {
-        _path = path;
-        if (path is null || !File.Exists(path)) return;
-        try
+        if (payload.Length < 6) return new List<ushort>(tracked);
+        if (payload[4] != 0) tracked.Clear();
+        int n = payload[5];
+        for (var i = 0; i < n && 6 + RecordSize * (i + 1) <= payload.Length; i++)
         {
-            var raw = JsonSerializer.Deserialize<Dictionary<string, List<ushort>>>(File.ReadAllText(path));
-            if (raw is not null)
-                _byChar = raw.ToDictionary(kv => uint.Parse(kv.Key), kv => kv.Value);
+            var at = 6 + RecordSize * i;
+            var flags = payload[at + RecordFlags];
+            if ((flags & TrackedBit) == 0) continue;
+            payload[at + RecordFlags] = (byte)(flags & ~TrackedBit);
+            var status = payload[at + RecordStatus];
+            var quest = BinaryPrimitives.ReadUInt16LittleEndian(payload.AsSpan(at));
+            if (status is >= 6 and <= 8 && !tracked.Contains(quest) && tracked.Count < Slots) tracked.Add(quest);
         }
-        catch (Exception) { /* a broken file starts empty; it is rewritten on the next change */ }
-    }
-
-    public int CharacterCount { get { lock (_lock) return _byChar.Count; } }
-
-    /// <summary>The tracked quests of <paramref name="chr"/> that are still in progress (<paramref name="active"/>),
-    /// or all of them when the active set is not known yet.</summary>
-    public List<ushort> Get(uint chr, IReadOnlySet<ushort>? active)
-    {
-        lock (_lock)
-        {
-            var list = _byChar.TryGetValue(chr, out var l) ? l : new List<ushort>();
-            return active is null ? new List<ushort>(list) : list.Where(active.Contains).ToList();
-        }
-    }
-
-    /// <summary>Track <paramref name="quest"/>; quests no longer in progress (not in <paramref name="active"/>) make
-    /// room first. Returns the 0x4420 result.</summary>
-    public ushort Add(uint chr, ushort quest, IReadOnlySet<ushort>? active)
-    {
-        lock (_lock)
-        {
-            if (!_byChar.TryGetValue(chr, out var list)) _byChar[chr] = list = new List<ushort>();
-            if (list.Contains(quest)) return AlreadyTracked;
-            if (active is not null) list.RemoveAll(q => !active.Contains(q));
-            if (list.Count >= Slots) return Refused;
-            list.Add(quest);
-            Save();
-            return Tracked;
-        }
-    }
-
-    /// <summary>Stop tracking <paramref name="quest"/>; true when it was tracked.</summary>
-    public bool Remove(uint chr, ushort quest)
-    {
-        lock (_lock)
-        {
-            if (!_byChar.TryGetValue(chr, out var list) || !list.Remove(quest)) return false;
-            Save();
-            return true;
-        }
+        return new List<ushort>(tracked);
     }
 
     /// <summary>The 0x110F payload: up to five quest ids, the rest 0xFFFF.</summary>
@@ -84,19 +47,7 @@ internal sealed class QuestTracker
     {
         var p = new byte[Slots * 2];
         for (var i = 0; i < Slots; i++)
-        {
-            var q = i < quests.Count ? quests[i] : (ushort)0xFFFF;
-            p[2 * i] = (byte)q;
-            p[2 * i + 1] = (byte)(q >> 8);
-        }
+            BinaryPrimitives.WriteUInt16LittleEndian(p.AsSpan(2 * i), i < quests.Count ? quests[i] : (ushort)0xFFFF);
         return p;
-    }
-
-    private void Save()
-    {
-        if (_path is null) return;
-        var tmp = _path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(_byChar.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)));
-        File.Move(tmp, _path, overwrite: true);
     }
 }

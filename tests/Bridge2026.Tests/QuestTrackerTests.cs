@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using Bridge2026;
 using FiestaLibReloaded.Networking;
@@ -11,13 +9,14 @@ using Xunit;
 namespace Bridge2026.Tests;
 
 /// <summary>
-/// The 2026 quest tracker the bridge keeps: 0x441F {quest} answered by 0x4420 {result, quest}, the tracked set sent as
-/// 0x110F after the login quest list, finished quests dropping out, five slots.
+/// The 2026 quest tracker through the bridge: the zone (quest_track plugin) owns the set and answers the requests;
+/// the bridge relays them and turns the TRACKED bit of the login quest records into the 0x110F list.
 /// </summary>
 public class QuestTrackerTests
 {
-    private static Bridge2026Session ZoneSession(Bridge2026Plugin plugin)
-        => new(plugin, new PluginSessionInfo("Zone_0_4", 19028, "127.0.0.1", 9028, "10.0.0.2:50000", "10.0.0.1:19028"));
+    private static Bridge2026Session ZoneSession()
+        => new(new Bridge2026Plugin(),
+               new PluginSessionInfo("Zone_0_4", 19028, "127.0.0.1", 9028, "10.0.0.2:50000", "10.0.0.1:19028"));
 
     private static PluginPacketContext FromClient(Bridge2026Session s, ushort opcode, params byte[] payload)
     {
@@ -33,122 +32,67 @@ public class QuestTrackerTests
         return ctx;
     }
 
-    /// <summary>A 2016 quest DOING list: {chrregnum u32, needClear u8, count u8} + 32-byte entries.</summary>
-    private static byte[] Doing(uint chr, params ushort[] quests)
+    /// <summary>A 2016 quest DOING list: {chrregnum u32, needClear u8, count u8} + 32-byte records.</summary>
+    private static byte[] Doing(bool clear, params (ushort quest, byte status, bool tracked)[] quests)
     {
         var p = new byte[6 + 32 * quests.Length];
-        BitConverter.GetBytes(chr).CopyTo(p, 0);
-        p[4] = 1;
+        BitConverter.GetBytes(7u).CopyTo(p, 0);
+        p[4] = (byte)(clear ? 1 : 0);
         p[5] = (byte)quests.Length;
-        for (var i = 0; i < quests.Length; i++) BitConverter.GetBytes(quests[i]).CopyTo(p, 6 + 32 * i);
+        for (var i = 0; i < quests.Length; i++)
+        {
+            BitConverter.GetBytes(quests[i].quest).CopyTo(p, 6 + 32 * i);
+            p[6 + 32 * i + 2] = quests[i].status;
+            p[6 + 32 * i + 0x1D] = (byte)(0x01 | (quests[i].tracked ? 0x80 : 0));   // End_Location set too
+        }
         return p;
     }
 
-    private static byte[] Q(ushort quest) => BitConverter.GetBytes(quest);
-
-    private static ushort[] Slots(byte[] p) => Enumerable.Range(0, 5).Select(i => BitConverter.ToUInt16(p, 2 * i)).ToArray();
+    private static ushort[] Slots(ReadOnlyMemory<byte> p)
+        => Enumerable.Range(0, 5).Select(i => BitConverter.ToUInt16(p.Span.Slice(2 * i, 2))).ToArray();
 
     [Fact]
-    public void Track_request_is_answered_and_never_reaches_the_zone()
+    public void Track_and_untrack_requests_go_to_the_zone()
     {
-        var s = ZoneSession(new Bridge2026Plugin());
-        FromServer(s, Op.QuestDoing, Doing(7, 100, 200));
+        var s = ZoneSession();
 
-        var ctx = FromClient(s, Op.QuestTrackReq, Q(200));
-
-        ctx.Forwarded.ShouldBeNull();
-        ctx.ExtraToClient.Single().Opcode.ShouldBe(Op.QuestTrackAck);
-        ctx.ExtraToClient.Single().Payload.ToArray().ShouldBe(new byte[] { 0xB0, 0x30, 200, 0 });
-        FromClient(s, Op.QuestTrackReq, Q(200)).ExtraToClient.Single().Payload.ToArray().ShouldBe(new byte[] { 0xB5, 0x30, 200, 0 });
+        FromClient(s, Op.QuestTrackReq, 200, 0).Forwarded.ShouldNotBeNull();
+        FromClient(s, Op.QuestUntrackReq, 200, 0).Forwarded.ShouldNotBeNull();
     }
 
     [Fact]
-    public void Login_list_sends_the_tracked_set_without_finished_quests()
+    public void Login_list_becomes_the_tracked_set_and_loses_the_bit()
     {
-        var plugin = new Bridge2026Plugin();
-        var s = ZoneSession(plugin);
-        FromServer(s, Op.QuestDoing, Doing(7, 100, 200));
-        FromClient(s, Op.QuestTrackReq, Q(100));
-        FromClient(s, Op.QuestTrackReq, Q(200));
+        var s = ZoneSession();
+        var doing = Doing(true, (100, 6, true), (200, 6, false), (300, 8, true));
 
-        // relog: quest 100 was handed in meanwhile
-        var ctx = FromServer(ZoneSession(plugin), Op.QuestDoing, Doing(7, 200, 300));
+        var ctx = FromServer(s, Op.QuestDoing, doing);
 
         var list = ctx.ExtraToClient.Single();
         list.Opcode.ShouldBe(Op.QuestTrackList);
-        Slots(list.Payload.ToArray()).ShouldBe(new ushort[] { 200, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF });
+        Slots(list.Payload).ShouldBe(new ushort[] { 100, 300, 0xFFFF, 0xFFFF, 0xFFFF });
+        var relayed = ctx.Forwarded!.Payload.ToArray();
+        relayed.Length.ShouldBe(6 + 37 * 3);
+        relayed.ShouldNotContain((byte)0x81);                          // End_Location kept, tracked bit gone
     }
 
     [Fact]
-    public void A_quest_accepted_this_session_counts_as_in_progress()
+    public void A_second_list_packet_adds_to_the_first()
     {
-        var s = ZoneSession(new Bridge2026Plugin());
-        FromServer(s, Op.QuestDoing, Doing(7));
+        var s = ZoneSession();
+        FromServer(s, Op.QuestDoing, Doing(true, (100, 6, true)));
 
-        FromClient(s, Op.QuestTrackReq, Q(500));
-        FromClient(s, Op.QuestTrackReq, Q(501));
+        var ctx = FromServer(s, Op.QuestDoing, Doing(false, (400, 6, true)));
 
-        new Bridge2026Plugin().Tracker.CharacterCount.ShouldBe(0);
-        FromServer(s, Op.QuestDoing, Doing(7)).ExtraToClient.Single().Payload.ToArray().ShouldBe(
-            QuestTracker.ListPayload(new List<ushort> { 500, 501 }));
+        Slots(ctx.ExtraToClient.Single().Payload).ShouldBe(new ushort[] { 100, 400, 0xFFFF, 0xFFFF, 0xFFFF });
     }
 
     [Fact]
-    public void Sixth_quest_is_refused_and_a_finished_one_makes_room()
+    public void Take_tracked_keeps_five_and_clears_the_bit()
     {
-        var t = new QuestTracker(null);
-        var active = new HashSet<ushort> { 1, 2, 3, 4, 5, 6 };
-        foreach (ushort q in new ushort[] { 1, 2, 3, 4, 5 }) t.Add(9, q, active).ShouldBe(QuestTracker.Tracked);
+        var p = Doing(true, (1, 6, true), (2, 6, true), (3, 6, true), (4, 6, true), (5, 6, true), (6, 6, true));
 
-        t.Add(9, 6, active).ShouldBe(QuestTracker.Refused);
-        active.Remove(3);
-        t.Add(9, 6, active).ShouldBe(QuestTracker.Tracked);
-        t.Get(9, active).ShouldBe(new ushort[] { 1, 2, 4, 5, 6 });
-    }
-
-    [Fact]
-    public void Store_survives_a_restart()
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"qt-{Guid.NewGuid():N}.json");
-        try
-        {
-            new QuestTracker(path).Add(42, 1234, null);
-            new QuestTracker(path).Get(42, null).ShouldBe(new ushort[] { 1234 });
-        }
-        finally { File.Delete(path); }
-    }
-
-    [Fact]
-    public void Untrack_removes_and_answers_4422()
-    {
-        var plugin = new Bridge2026Plugin();
-        var s = ZoneSession(plugin);
-        FromServer(s, Op.QuestDoing, Doing(7, 100));
-        FromClient(s, Op.QuestTrackReq, Q(100));
-
-        var ctx = FromClient(s, Op.QuestUntrackReq, Q(100));
-
-        ctx.Forwarded.ShouldBeNull();
-        ctx.ExtraToClient.Single().Opcode.ShouldBe(Op.QuestUntrackAck);
-        ctx.ExtraToClient.Single().Payload.ToArray().ShouldBe(new byte[] { 0xB8, 0x30, 100, 0 });
-        plugin.Tracker.Get(7, null).ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void Reward_of_a_tracked_quest_untracks_it_after_the_close()
-    {
-        var plugin = new Bridge2026Plugin();
-        var s = ZoneSession(plugin);
-        FromServer(s, Op.QuestDoing, Doing(7, 100, 200));
-        FromClient(s, Op.QuestTrackReq, Q(100));
-
-        var done = new byte[103];
-        done[0] = 100;
-        done[2] = (byte)Op.QscDone;
-        var ctx = FromServer(s, Op.QuestScriptCmdReq, done);
-
-        ctx.ExtraToClient.Last().Opcode.ShouldBe(Op.QuestUntrackAck);
-        ctx.ExtraToClient.Last().Payload.ToArray().ShouldBe(new byte[] { 0xB8, 0x30, 100, 0 });
-        plugin.Tracker.Get(7, null).ShouldBeEmpty();
+        QuestTracker.TakeTracked(p, new()).ShouldBe(new ushort[] { 1, 2, 3, 4, 5 });
+        Enumerable.Range(0, 6).All(i => p[6 + 32 * i + 0x1D] == 0x01).ShouldBeTrue();
     }
 }
