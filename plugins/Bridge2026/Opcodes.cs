@@ -126,6 +126,11 @@ internal static class Op
 
     public const ushort ActEndOfTrade = 0x200b;       // C->S, empty: (8 << 10) | 0x0B
     public const ushort QuestJobDungeonFindRng = 0x441f;
+    // 2026 QUEST TRACKER (see QuestTracker): the client's 0x441F {u16 quest} is a TRACK request (2016 has the number
+    // as a zone RING packet), answered by 0x4420 {u16 result, u16 quest}; 0x110F lists the tracked set at login.
+    public const ushort QuestTrackReq = 0x441f;
+    public const ushort QuestTrackAck = 0x4420;
+    public const ushort QuestTrackList = 0x110f;
     public const int QuestJobDungeonFindRng2016Size = 115;
 
     public const ushort SwingDamage = 0x2448;

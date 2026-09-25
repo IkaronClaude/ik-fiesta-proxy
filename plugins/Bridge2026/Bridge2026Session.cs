@@ -1,5 +1,6 @@
 using FiestaLibReloaded.Networking;
 using FiestaProxy.Plugins;
+using System.Buffers.Binary;
 
 namespace Bridge2026;
 
@@ -51,6 +52,12 @@ internal sealed class Bridge2026Session : IPluginSession
     private readonly Dictionary<byte, uint> _avatars = new();   // slot -> chrregnum
     private readonly HashSet<byte> _usedSlots = new();
     private readonly HashSet<int> _foldedEmpty = new();         // 2026 equip slots this client already has empty
+
+    // Quest tracker (QuestTracker): the character whose quest list came through last, the in-progress quests of that
+    // list (null until one arrives) and the quests tracked in this session (the login list does not hold them yet).
+    private uint? _questChr;
+    private HashSet<ushort>? _questsDoing;
+    private readonly HashSet<ushort> _questsAddedHere = new();
 
     /// <summary>
     /// NC_ITEM_EQUIPCHANGE_CMD {u16 key, u8 2016 equip slot, item record} names the SERVER's slot, but the 2026
@@ -181,18 +188,24 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
-        // 0x441F NC_QUEST_JOBDUNGEON_FIND_RNG {questid}. Sent by the 2026 ACCEPT case itself (0x5B4729):
-        // after the unchanged 2016 body it checks [this+0x1440] and a global, then fires this and moves
-        // on. It sets no pending state and waits for nothing - the official server answers 0x4420
-        // LINK_FAIL 13 times in 15 and the client carries on. It is NOT a click, NOT a substitute for an
-        // ack, and NOT a reply to 442E, all of which this comment has claimed at some point.
-        // The 2016 zone registers this opcode only on its zone-to-zone link (it is a RING packet, 115
-        // bytes there), so from a client it can only be dropped. An earlier revision turned it into an
-        // NC_QUEST_SCRIPT_CMD_ACK; with nothing outstanding to ack, that was a phantom Next click that
-        // could skip the page following an ACCEPT. Removed.
-        if (p.Opcode == Op.QuestJobDungeonFindRng && payload.Length != Op.QuestJobDungeonFindRng2016Size)
+        // 0x441F {u16 quest} = the 2026 QUEST TRACKER's "track this quest" (see QuestTracker): the client sends it on
+        // every quest accept and from the "start tracking" button, and official answers 0x4420 {result, quest}.
+        // 2016 numbers the opcode NC_QUEST_JOBDUNGEON_FIND_RNG, a zone-to-zone RING packet (115 bytes there), so the
+        // zone never sees it; the bridge keeps the tracked set itself and answers. (It is not a click or an ack: an
+        // earlier revision turned it into NC_QUEST_SCRIPT_CMD_ACK and skipped the page after an ACCEPT.)
+        if (p.Opcode == Op.QuestTrackReq && payload.Length != Op.QuestJobDungeonFindRng2016Size)
         {
             ctx.Drop();
+            if (payload.Length == 2 && _questChr is { } chr)
+            {
+                var quest = (ushort)(payload[0] | (payload[1] << 8));
+                var result = _plugin.Tracker.Add(chr, quest, ActiveQuests());
+                if (result == QuestTracker.Tracked) _questsAddedHere.Add(quest);
+                ctx.ToClient(Op.QuestTrackAck, new[] { (byte)result, (byte)(result >> 8), payload[0], payload[1] });
+                _plugin.Log($"[{_info.ServiceName}] quest tracker: chr {chr} track {quest} -> 0x{result:X4}");
+            }
+            else _plugin.Log($"[{_info.ServiceName}] 0x441F {payload.Length} B ({Convert.ToHexString(payload)}) dropped: "
+                             + (_questChr is null ? "no quest list seen yet" : "not a 2-byte track request"));
             return;
         }
 
@@ -631,6 +644,7 @@ internal sealed class Bridge2026Session : IPluginSession
 
             case Op.QuestDoing when T.QuestDoing2016To2026(payload, _plugin.CounterRows) is { } qd:
                 ctx.Replace(qd);
+                SendTrackedQuests(ctx, payload);
                 return;
 
             case Op.QuestRepeat when T.QuestRepeat2016To2026(payload, _plugin.CounterRows) is { } qr:
@@ -680,4 +694,25 @@ internal sealed class Bridge2026Session : IPluginSession
     }
 
     public void Dispose() { }
+
+    private IReadOnlySet<ushort>? ActiveQuests()
+        => _questsDoing is null ? null : new HashSet<ushort>(_questsDoing.Concat(_questsAddedHere));
+
+    /// <summary>After a 2016 quest DOING list {chrregnum u32, needClear u8, count u8, 32-byte entries (id u16 at +0)}:
+    /// note the character and its in-progress quests, then send the 0x110F tracked set, as official does at login.</summary>
+    private void SendTrackedQuests(PluginPacketContext ctx, byte[] payload)
+    {
+        var chr = BinaryPrimitives.ReadUInt32LittleEndian(payload);
+        if (_questChr != chr || payload[4] != 0 || _questsDoing is null)
+        {
+            if (_questChr != chr) _questsAddedHere.Clear();
+            _questsDoing = new HashSet<ushort>();
+        }
+        _questChr = chr;
+        for (var i = 0; i < payload[5]; i++)
+            _questsDoing.Add(BinaryPrimitives.ReadUInt16LittleEndian(payload.AsSpan(6 + 32 * i)));
+        var tracked = _plugin.Tracker.Get(chr, ActiveQuests());
+        ctx.ToClient(Op.QuestTrackList, QuestTracker.ListPayload(tracked));
+        _plugin.Log($"[{_info.ServiceName}] quest tracker: chr {chr}, {_questsDoing.Count} in progress, tracked [{string.Join(",", tracked)}]");
+    }
 }

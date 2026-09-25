@@ -191,6 +191,7 @@ public sealed class Bridge2026Plugin : IProxyPlugin
         if (s.TryGetValue("PORT_OFFSET", out var po) && int.TryParse(po, out var pov)) _portOffset = pov;
         if (s.TryGetValue("ADVERTISE", out var adv)) _advertise = adv;
         if (s.TryGetValue("WORLD_STATUS", out var ws) && int.TryParse(ws, out var wsv)) WorldStatusOverride = wsv;
+        if (s.TryGetValue("QUEST_TRACKER", out var qt) && !string.IsNullOrWhiteSpace(qt)) Tracker = new QuestTracker(qt);
 
         _settings = s;
         LoadGenerated();
@@ -265,6 +266,9 @@ public sealed class Bridge2026Plugin : IProxyPlugin
 
     /// <summary>The 2026 client QuestEndNpc row of each zone counter slot, or null when they are the same.</summary>
     public int[]? CounterRows(int quest) => _counterRows.TryGetValue(quest, out var r) ? r : null;
+
+    /// <summary>The 2026 quest tracker's store (QUEST_TRACKER = a JSON file; unset = kept in memory only).</summary>
+    internal QuestTracker Tracker { get; private set; } = new QuestTracker(null);
 
     /// <summary>The item's attribute class, or -1 when it is unknown or no table was supplied.</summary>
     public int ClassOf(int itemId)
