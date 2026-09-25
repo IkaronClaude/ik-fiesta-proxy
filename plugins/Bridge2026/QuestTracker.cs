@@ -11,13 +11,16 @@ namespace Bridge2026;
 ///   S-&gt;C 0x4420 {u16 result, u16 quest}     0x30B0 tracked; 0x30B5 answered to repeats of a tracked quest; 0x30B4
 ///                                             refusals (quests finished before the request landed)
 ///   S-&gt;C 0x110F 5 x {u16 quest}             the tracked set at every zone login, 0xFFFF = empty slot (the limit)
+///   C-&gt;S 0x4421 {u16 quest}                 stop tracking (the button; seen on our stack 2026-09-25)
+///   S-&gt;C 0x4422 {u16 0x30B8, u16 quest}     removed - also sent UNASKED after a tracked quest's reward
+///                                             (official: 0x4401 QSC_DONE, 0x442E, 0x4422 - six times in that capture)
 /// Official drops a quest from the set once it is no longer in progress; so does this store, by the login quest list.
 /// State is one small JSON file: character number -&gt; quest ids.
 /// </summary>
 internal sealed class QuestTracker
 {
     public const int Slots = 5;
-    public const ushort Tracked = 0x30B0, Refused = 0x30B4, AlreadyTracked = 0x30B5;
+    public const ushort Tracked = 0x30B0, Refused = 0x30B4, AlreadyTracked = 0x30B5, Removed = 0x30B8;
 
     private readonly string? _path;
     private readonly object _lock = new();
@@ -62,6 +65,17 @@ internal sealed class QuestTracker
             list.Add(quest);
             Save();
             return Tracked;
+        }
+    }
+
+    /// <summary>Stop tracking <paramref name="quest"/>; true when it was tracked.</summary>
+    public bool Remove(uint chr, ushort quest)
+    {
+        lock (_lock)
+        {
+            if (!_byChar.TryGetValue(chr, out var list) || !list.Remove(quest)) return false;
+            Save();
+            return true;
         }
     }
 

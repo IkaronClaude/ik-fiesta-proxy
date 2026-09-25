@@ -117,4 +117,38 @@ public class QuestTrackerTests
         }
         finally { File.Delete(path); }
     }
+
+    [Fact]
+    public void Untrack_removes_and_answers_4422()
+    {
+        var plugin = new Bridge2026Plugin();
+        var s = ZoneSession(plugin);
+        FromServer(s, Op.QuestDoing, Doing(7, 100));
+        FromClient(s, Op.QuestTrackReq, Q(100));
+
+        var ctx = FromClient(s, Op.QuestUntrackReq, Q(100));
+
+        ctx.Forwarded.ShouldBeNull();
+        ctx.ExtraToClient.Single().Opcode.ShouldBe(Op.QuestUntrackAck);
+        ctx.ExtraToClient.Single().Payload.ToArray().ShouldBe(new byte[] { 0xB8, 0x30, 100, 0 });
+        plugin.Tracker.Get(7, null).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Reward_of_a_tracked_quest_untracks_it_after_the_close()
+    {
+        var plugin = new Bridge2026Plugin();
+        var s = ZoneSession(plugin);
+        FromServer(s, Op.QuestDoing, Doing(7, 100, 200));
+        FromClient(s, Op.QuestTrackReq, Q(100));
+
+        var done = new byte[103];
+        done[0] = 100;
+        done[2] = (byte)Op.QscDone;
+        var ctx = FromServer(s, Op.QuestScriptCmdReq, done);
+
+        ctx.ExtraToClient.Last().Opcode.ShouldBe(Op.QuestUntrackAck);
+        ctx.ExtraToClient.Last().Payload.ToArray().ShouldBe(new byte[] { 0xB8, 0x30, 100, 0 });
+        plugin.Tracker.Get(7, null).ShouldBeEmpty();
+    }
 }
