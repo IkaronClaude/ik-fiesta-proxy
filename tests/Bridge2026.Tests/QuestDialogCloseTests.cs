@@ -61,13 +61,13 @@ public class QuestDialogCloseTests
     }
 
     [Fact]
-    public void The_441F_side_effect_of_ACCEPT_is_dropped_and_answers_nothing()
+    public void The_441F_side_effect_of_ACCEPT_goes_to_the_zone_tracker_and_is_no_script_ack()
     {
         var s = ZoneSession();
 
         var ctx = FromClient(s, Op.QuestJobDungeonFindRng, 0x9F, 0x4E);
 
-        ctx.Forwarded.ShouldBeNull();
+        ctx.Forwarded!.Opcode.ShouldBe(Op.QuestJobDungeonFindRng);      // quest_track (zone plugin) answers it
         ctx.ExtraToServer.ShouldBeEmpty();
         ctx.ExtraToClient.ShouldBeEmpty();
     }

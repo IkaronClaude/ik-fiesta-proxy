@@ -53,11 +53,7 @@ internal sealed class Bridge2026Session : IPluginSession
     private readonly HashSet<byte> _usedSlots = new();
     private readonly HashSet<int> _foldedEmpty = new();         // 2026 equip slots this client already has empty
 
-    // Quest tracker (QuestTracker): the character whose quest list came through last, the in-progress quests of that
-    // list (null until one arrives) and the quests tracked in this session (the login list does not hold them yet).
-    private uint? _questChr;
-    private HashSet<ushort>? _questsDoing;
-    private readonly HashSet<ushort> _questsAddedHere = new();
+    private readonly List<ushort> _trackedQuests = new();       // quest tracker: this login's set, from the DOING list(s)
 
     /// <summary>
     /// NC_ITEM_EQUIPCHANGE_CMD {u16 key, u8 2016 equip slot, item record} names the SERVER's slot, but the 2026
@@ -188,37 +184,15 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
-        // 0x441F {u16 quest} = the 2026 QUEST TRACKER's "track this quest" (see QuestTracker): the client sends it on
-        // every quest accept and from the "start tracking" button, and official answers 0x4420 {result, quest}.
-        // 2016 numbers the opcode NC_QUEST_JOBDUNGEON_FIND_RNG, a zone-to-zone RING packet (115 bytes there), so the
-        // zone never sees it; the bridge keeps the tracked set itself and answers. (It is not a click or an ack: an
-        // earlier revision turned it into NC_QUEST_SCRIPT_CMD_ACK and skipped the page after an ACCEPT.)
-        if (p.Opcode == Op.QuestTrackReq && payload.Length != Op.QuestJobDungeonFindRng2016Size)
+        // 0x441F {u16 quest} track / 0x4421 {u16 quest} untrack = the 2026 QUEST TRACKER (see QuestTracker). The zone
+        // plugin quest_track answers both (0x4420 / 0x4422) and keeps the set on the character's quest records, so they
+        // go through unchanged. 2016 numbers them as zone-to-zone packets (FIND_RNG is 115 bytes there): anything but
+        // the 2-byte client form is dropped. (Not a click or an ack: an earlier revision turned 0x441F into
+        // NC_QUEST_SCRIPT_CMD_ACK and skipped the page after an ACCEPT.)
+        if ((p.Opcode == Op.QuestTrackReq || p.Opcode == Op.QuestUntrackReq) && payload.Length != 2)
         {
             ctx.Drop();
-            if (payload.Length == 2 && _questChr is { } chr)
-            {
-                var quest = (ushort)(payload[0] | (payload[1] << 8));
-                var result = _plugin.Tracker.Add(chr, quest, ActiveQuests());
-                if (result == QuestTracker.Tracked) _questsAddedHere.Add(quest);
-                ctx.ToClient(Op.QuestTrackAck, new[] { (byte)result, (byte)(result >> 8), payload[0], payload[1] });
-                _plugin.Log($"[{_info.ServiceName}] quest tracker: chr {chr} track {quest} -> 0x{result:X4}");
-            }
-            else _plugin.Log($"[{_info.ServiceName}] 0x441F {payload.Length} B ({Convert.ToHexString(payload)}) dropped: "
-                             + (_questChr is null ? "no quest list seen yet" : "not a 2-byte track request"));
-            return;
-        }
-
-        // 0x4421 {u16 quest} = the tracker's "stop tracking" button. Same number as NC_QUEST_JOBDUNGEON_LINK_FAIL_CMD
-        // in 2016 (a zone-link packet), so never relayed; answered 0x4422 {0x30B8, quest}.
-        if (p.Opcode == Op.QuestUntrackReq && payload.Length == 2)
-        {
-            ctx.Drop();
-            var quest = (ushort)(payload[0] | (payload[1] << 8));
-            var had = _questChr is { } chr && _plugin.Tracker.Remove(chr, quest);
-            _questsAddedHere.Remove(quest);
-            ctx.ToClient(Op.QuestUntrackAck, UntrackPayload(quest));
-            _plugin.Log($"[{_info.ServiceName}] quest tracker: chr {_questChr} untrack {quest} ({(had ? "removed" : "was not tracked")})");
+            _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4} {payload.Length} B dropped: not the 2-byte tracker request");
             return;
         }
 
@@ -410,24 +384,14 @@ internal sealed class Bridge2026Session : IPluginSession
         // QSC_DONE (the reward was given): a script may stop there with no END after it, and the 2026 dialog then
         // never closes - Continue did nothing on "Mischievous Monsters" (operator 2026-09-24). The client only
         // closes after 0x442E, so DONE is relayed and followed by one.
-        // A tracked quest whose reward was given leaves the tracker; official says so with 0x4422 after the 0x442E.
-        var doneQuest = p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
-                        && BitConverter.ToUInt32(payload, 2) == Op.QscDone ? BitConverter.ToUInt16(payload, 0) : (ushort?)null;
-        if (doneQuest is { } dq)
-        {
-            _questsDoing?.Remove(dq);
-            _questsAddedHere.Remove(dq);
-        }
-
-        if (doneQuest is { } dq2 && CloseDialogForClient)
+        if (p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
+            && BitConverter.ToUInt32(payload, 2) == Op.QscDone && CloseDialogForClient)
         {
             ctx.ToClient(Op.QuestCloseDialog, Op.QuestCloseDialogPayload);
             _closeSentAt = Environment.TickCount64;
-            _plugin.Log($"[{_info.ServiceName}] quest {dq2} script DONE -> 0x442E");
-            UntrackDone(ctx, dq2);
+            _plugin.Log($"[{_info.ServiceName}] quest {BitConverter.ToUInt16(payload, 0)} script DONE -> 0x442E");
             return;
         }
-        if (doneQuest is { } dq3) UntrackDone(ctx, dq3);
 
         if (p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
             && BitConverter.ToUInt32(payload, 2) == Op.QscEnd)
@@ -665,10 +629,16 @@ internal sealed class Bridge2026Session : IPluginSession
                 if (T.Tail7_2016To2026(payload, 13) is { } t7) ctx.Replace(t7);
                 return;
 
-            case Op.QuestDoing when T.QuestDoing2016To2026(payload, _plugin.CounterRows) is { } qd:
+            case Op.QuestDoing when payload.Length >= 6:
+            {
+                var tracked = QuestTracker.TakeTracked(payload, _trackedQuests);
+                if (T.QuestDoing2016To2026(payload, _plugin.CounterRows) is not { } qd) return;
                 ctx.Replace(qd);
-                SendTrackedQuests(ctx, payload);
+                ctx.ToClient(Op.QuestTrackList, QuestTracker.ListPayload(tracked));
+                _plugin.Log($"[{_info.ServiceName}] quest tracker: chr {BinaryPrimitives.ReadUInt32LittleEndian(payload)}, "
+                            + $"tracked [{string.Join(",", tracked)}]");
                 return;
+            }
 
             case Op.QuestRepeat when T.QuestRepeat2016To2026(payload, _plugin.CounterRows) is { } qr:
                 ctx.Replace(qr);
@@ -717,35 +687,4 @@ internal sealed class Bridge2026Session : IPluginSession
     }
 
     public void Dispose() { }
-
-    private static byte[] UntrackPayload(ushort quest)
-        => new[] { unchecked((byte)QuestTracker.Removed), (byte)(QuestTracker.Removed >> 8), (byte)quest, (byte)(quest >> 8) };
-
-    private void UntrackDone(PluginPacketContext ctx, ushort quest)
-    {
-        if (_questChr is not { } chr || !_plugin.Tracker.Remove(chr, quest)) return;
-        ctx.ToClient(Op.QuestUntrackAck, UntrackPayload(quest));
-        _plugin.Log($"[{_info.ServiceName}] quest tracker: chr {chr} quest {quest} done -> untracked (0x4422)");
-    }
-
-    private IReadOnlySet<ushort>? ActiveQuests()
-        => _questsDoing is null ? null : new HashSet<ushort>(_questsDoing.Concat(_questsAddedHere));
-
-    /// <summary>After a 2016 quest DOING list {chrregnum u32, needClear u8, count u8, 32-byte entries (id u16 at +0)}:
-    /// note the character and its in-progress quests, then send the 0x110F tracked set, as official does at login.</summary>
-    private void SendTrackedQuests(PluginPacketContext ctx, byte[] payload)
-    {
-        var chr = BinaryPrimitives.ReadUInt32LittleEndian(payload);
-        if (_questChr != chr || payload[4] != 0 || _questsDoing is null)
-        {
-            if (_questChr != chr) _questsAddedHere.Clear();
-            _questsDoing = new HashSet<ushort>();
-        }
-        _questChr = chr;
-        for (var i = 0; i < payload[5]; i++)
-            _questsDoing.Add(BinaryPrimitives.ReadUInt16LittleEndian(payload.AsSpan(6 + 32 * i)));
-        var tracked = _plugin.Tracker.Get(chr, ActiveQuests());
-        ctx.ToClient(Op.QuestTrackList, QuestTracker.ListPayload(tracked));
-        _plugin.Log($"[{_info.ServiceName}] quest tracker: chr {chr}, {_questsDoing.Count} in progress, tracked [{string.Join(",", tracked)}]");
-    }
 }

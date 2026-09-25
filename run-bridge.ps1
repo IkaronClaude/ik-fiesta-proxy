@@ -61,8 +61,6 @@ $env:FIESTAPROXY_PLUGIN_BRIDGE2026_ITEM_CLASSES = "$root/deploy/bridge2026/item-
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_QUEST_REWARD_INDEX = "$root/deploy/bridge2026/quest-reward-index.txt"
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_EQUIP_FOLD   = "$root/deploy/bridge2026/equip-fold.txt"
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_QUEST_COUNTER_ROWS = "$root/deploy/bridge2026/quest-counter-rows.txt"
-# Quest tracker state (2026 pinned quests, per character): the bridge keeps it, the 2016 zone has none.
-$env:FIESTAPROXY_PLUGIN_BRIDGE2026_QUEST_TRACKER = "$root/run/quest-tracker.json"
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_OPCODES     = "$root/lib/FiestaLib-Reloaded/docs/extracted/merged/all-enums.json"
 
 Push-Location $run
