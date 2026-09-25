@@ -102,3 +102,23 @@ public class EquipFoldTests : IDisposable
         FromServer(s, Unequip(5)).ExtraToClient.ShouldBeEmpty();
     }
 }
+
+/// <summary>2026's map-status request (0x182E) is not a 2016 opcode: dropped, and answered 00 like official.</summary>
+public class MapInfoTests
+{
+    [Fact]
+    public void The_map_status_request_is_dropped_and_answered_zero()
+    {
+        var plugin = new Bridge2026Plugin();
+        var s = new Bridge2026Session(plugin,
+            new PluginSessionInfo("Zone_0_4", 19028, "127.0.0.1", 9028, "10.0.0.2:50000", "10.0.0.1:19028"));
+        var ctx = new PluginPacketContext(new FiestaPacket(Op.C26MapInfoReq, "Rou\0\0\0\0\0\0\0\0\0"u8.ToArray()), fromClient: true);
+
+        s.OnClientPacket(ctx);
+
+        ctx.Forwarded.ShouldBeNull();
+        var ack = ctx.ExtraToClient.Single();
+        ack.Opcode.ShouldBe(Op.C26MapInfoAck);
+        ack.Payload.ToArray().ShouldBe(new byte[] { 0 });
+    }
+}

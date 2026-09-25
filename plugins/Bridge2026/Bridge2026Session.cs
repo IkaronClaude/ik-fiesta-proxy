@@ -349,6 +349,14 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
+        // 2026's map-status request after every map login: no 2016 opcode, official answers 00 (see Op.C26MapInfoReq)
+        if (p.Opcode == Op.C26MapInfoReq)
+        {
+            ctx.Drop();
+            ctx.ToClient(Op.C26MapInfoAck, new byte[] { 0 });
+            return;
+        }
+
         // Anything the 2016 build has no opcode for would make the server hang up.
         if (!_plugin.IsKnownTo2016(p.Opcode))
         {

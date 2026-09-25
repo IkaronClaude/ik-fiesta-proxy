@@ -42,6 +42,13 @@ internal static class Op
     public const ushort C26WorldSelectAck = 0x0c0b;
     public const ushort C26WmLogin = 0x0c0e;
     public const ushort C26WmAvatars = 0x0c0f;
+    /// <summary>
+    /// 2026-only MAP pair (not in the 2016 build): after NC_MAP_LOGINCOMPLETE the client sends {char[12] map name} and
+    /// official answers {u8 status} - 00 in every official capture. Fiesta.exe 0x58C561 stores the byte at 0xD1813D
+    /// (3 / 4 start map-event handling); the bridge answers 00 itself, as official does.
+    /// </summary>
+    public const ushort C26MapInfoReq = 0x182E;
+    public const ushort C26MapInfoAck = 0x182F;
 
     // ---- 2016 server ----
     public const ushort Version16 = 0x0c65;
