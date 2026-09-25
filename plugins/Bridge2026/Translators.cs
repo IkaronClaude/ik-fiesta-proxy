@@ -385,24 +385,34 @@ internal static class T
     /// reading "the counters are u16 on the 2026 wire" put slot 1 at +26 = the client's slot 2: every partly
     /// done quest showed 0/N after a relog (operator 2026-09-24, Buzzel 0/30).
     /// </summary>
-    private static void QuestEntry2016To2026(byte[] src, int at, byte[] dst, int to)
-        => Array.Copy(src, at, dst, to, 32);
+    private static void QuestEntry2016To2026(byte[] src, int at, byte[] dst, int to, Func<int, int[]?>? counterRows)
+    {
+        Array.Copy(src, at, dst, to, 32);
+        var rows = counterRows?.Invoke(BinaryPrimitives.ReadUInt16LittleEndian(src.AsSpan(at)));
+        if (rows is null) return;
+        // The 2016 record could not hold every end row of this quest (merge_quests END_OVERFLOW dropped the hand-in
+        // row), so zone counter slot k belongs to the 2026 client's row rows[k]. The 2026 entry is 5 bytes longer:
+        // read as a 10-byte counter array at 24 (2026 quests have up to 8 end rows). Only these quests are moved.
+        for (var k = 0; k < 5; k++) dst[to + 24 + k] = 0;
+        for (var k = 0; k < rows.Length && k < 5; k++)
+            if (rows[k] is >= 0 and < 10) dst[to + 24 + rows[k]] = src[at + 24 + k];
+    }
 
     /// <summary>CLIENT_QUEST_DOING {chrregnum u32, flag u8, count u8} + entries.</summary>
-    public static byte[]? QuestDoing2016To2026(byte[] p)
-        => p.Length < 6 ? null : QuestList(p, p[5]);
+    public static byte[]? QuestDoing2016To2026(byte[] p, Func<int, int[]?>? counterRows = null)
+        => p.Length < 6 ? null : QuestList(p, p[5], counterRows);
 
     /// <summary>CLIENT_QUEST_REPEAT {chrregnum u32, count u16} + entries.</summary>
-    public static byte[]? QuestRepeat2016To2026(byte[] p)
-        => p.Length < 6 ? null : QuestList(p, BinaryPrimitives.ReadUInt16LittleEndian(p.AsSpan(4)));
+    public static byte[]? QuestRepeat2016To2026(byte[] p, Func<int, int[]?>? counterRows = null)
+        => p.Length < 6 ? null : QuestList(p, BinaryPrimitives.ReadUInt16LittleEndian(p.AsSpan(4)), counterRows);
 
     /// <summary>Both quest lists carry a 6-byte head and then the same entries.</summary>
-    private static byte[]? QuestList(byte[] p, int n)
+    private static byte[]? QuestList(byte[] p, int n, Func<int, int[]?>? counterRows)
     {
         if (p.Length != 6 + 32 * n) return null;
         var outp = new byte[6 + 37 * n];
         Array.Copy(p, 0, outp, 0, 6);
-        for (var i = 0; i < n; i++) QuestEntry2016To2026(p, 6 + 32 * i, outp, 6 + 37 * i);
+        for (var i = 0; i < n; i++) QuestEntry2016To2026(p, 6 + 32 * i, outp, 6 + 37 * i, counterRows);
         return outp;
     }
 

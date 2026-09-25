@@ -31,6 +31,7 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     private int _portOffset;
     private Dictionary<int, int>? _itemClass;
     private Dictionary<(int Quest, int Index), int>? _rewardSlot;
+    private Dictionary<int, int[]> _counterRows = new();    // quest -> the 2026 client row of each zone counter slot
     private Dictionary<int, int[]> _foldedInto = new();     // 2016 equip slot -> the 2026 slots the server folds into it
     private Dictionary<int, int> _equip26 = new();          // item id -> its 2026 Equip, only where that is a folded slot
 
@@ -118,6 +119,27 @@ public sealed class Bridge2026Plugin : IProxyPlugin
                           + "and the player gets a different item");
             }
 
+            if (s.TryGetValue("QUEST_COUNTER_ROWS", out var qc) && File.Exists(qc))
+            {
+                var map = new Dictionary<int, int[]>();
+                foreach (var line in File.ReadAllLines(qc))
+                {
+                    var t = line.Trim();
+                    if (t.Length == 0 || t[0] == '#') continue;
+                    var f = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (f.Length == 6 && int.TryParse(f[0], out var q)
+                        && f.Skip(1).All(x => int.TryParse(x, out _)))
+                        map[q] = f.Skip(1).Select(int.Parse).ToArray();
+                }
+                _counterRows = map;
+                host.Info($"{Name}: {map.Count} quests with moved counter rows from {qc}");
+            }
+            else
+            {
+                host.Warn($"{Name}: no QUEST_COUNTER_ROWS file - a quest with more than 5 end rows shows its kill counts "
+                          + "one row too high after a relog");
+            }
+
             if (s.TryGetValue("EQUIP_FOLD", out var ef) && File.Exists(ef))
             {
                 var fold = new Dictionary<int, List<int>>();
@@ -142,7 +164,7 @@ public sealed class Bridge2026Plugin : IProxyPlugin
 
     private void WatchGenerated()
     {
-        var dirs = new[] { "CHECKSUMS", "ITEM_CLASSES", "QUEST_REWARD_INDEX", "EQUIP_FOLD" }
+        var dirs = new[] { "CHECKSUMS", "ITEM_CLASSES", "QUEST_REWARD_INDEX", "EQUIP_FOLD", "QUEST_COUNTER_ROWS" }
             .Select(k => _settings.TryGetValue(k, out var f) ? Path.GetDirectoryName(Path.GetFullPath(f)) : null)
             .Where(d => d != null && Directory.Exists(d)).Distinct().ToList();
         if (dirs.Count != 1) return;                   // bridge_data writes all three into one folder
@@ -240,6 +262,9 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     /// </summary>
     public int RewardSlot(int quest, int index)
         => _rewardSlot is not null && _rewardSlot.TryGetValue((quest, index), out var s) ? s : -1;
+
+    /// <summary>The 2026 client QuestEndNpc row of each zone counter slot, or null when they are the same.</summary>
+    public int[]? CounterRows(int quest) => _counterRows.TryGetValue(quest, out var r) ? r : null;
 
     /// <summary>The item's attribute class, or -1 when it is unknown or no table was supplied.</summary>
     public int ClassOf(int itemId)

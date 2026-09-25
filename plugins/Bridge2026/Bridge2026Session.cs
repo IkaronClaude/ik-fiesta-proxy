@@ -629,11 +629,11 @@ internal sealed class Bridge2026Session : IPluginSession
                 if (T.Tail7_2016To2026(payload, 13) is { } t7) ctx.Replace(t7);
                 return;
 
-            case Op.QuestDoing when T.QuestDoing2016To2026(payload) is { } qd:
+            case Op.QuestDoing when T.QuestDoing2016To2026(payload, _plugin.CounterRows) is { } qd:
                 ctx.Replace(qd);
                 return;
 
-            case Op.QuestRepeat when T.QuestRepeat2016To2026(payload) is { } qr:
+            case Op.QuestRepeat when T.QuestRepeat2016To2026(payload, _plugin.CounterRows) is { } qr:
                 ctx.Replace(qr);
                 return;
 
