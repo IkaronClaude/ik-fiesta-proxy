@@ -396,6 +396,32 @@ public class TranslatorTests
     }
 
     [Fact]
+    public void A_quest_with_moved_counter_rows_puts_each_count_at_its_client_row()
+    {
+        // 65265: the 2016 record's 5 slots are its 5 kills (the hand-in row did not fit); the 2026 client's rows are
+        // talk, kill1..kill5 - so zone slot k is client row k+1 (quest-counter-rows.txt: "65265 1 2 3 4 5").
+        var q = new byte[32];
+        q[0] = 0xF1; q[1] = 0xFE;                          // quest 65265
+        q[2] = 6;                                           // doing
+        for (var k = 0; k < 5; k++) q[24 + k] = (byte)(10 + k);
+        int[]? Rows(int quest) => quest == 65265 ? new[] { 1, 2, 3, 4, 5 } : null;
+
+        var outp = T.QuestDoing2016To2026(Concat(Hex("cd0b00000101"), q), Rows)!;
+
+        outp[6 + 24].ShouldBe((byte)0);                     // the talk row
+        for (var k = 0; k < 5; k++) outp[6 + 25 + k].ShouldBe((byte)(10 + k));
+        outp.AsSpan(6, 24).ToArray().ShouldBe(q.AsSpan(0, 24).ToArray());   // everything before the counters
+    }
+
+    [Fact]
+    public void A_quest_without_moved_rows_is_copied_as_before()
+    {
+        var q = Hex("180008f1377a6a000000009a397a6a0000000001000000000003000000000000");
+        var outp = T.QuestRepeat2016To2026(Concat(Hex("cd0b00000100"), q), _ => null)!;
+        outp.AsSpan(6, 32).ToArray().ShouldBe(q);
+    }
+
+    [Fact]
     public void Quest_doing_takes_its_count_from_byte_five_and_repeat_from_a_u16()
     {
         var q16 = new byte[32];
