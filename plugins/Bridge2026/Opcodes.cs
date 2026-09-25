@@ -131,6 +131,8 @@ internal static class Op
     public const ushort QuestTrackReq = 0x441f;
     public const ushort QuestTrackAck = 0x4420;
     public const ushort QuestTrackList = 0x110f;
+    public const ushort QuestUntrackReq = 0x4421;   // C->S {u16 quest}: the "stop tracking" button
+    public const ushort QuestUntrackAck = 0x4422;   // S->C {u16 0x30B8, u16 quest}: removed (official also sends it unasked at reward)
     public const int QuestJobDungeonFindRng2016Size = 115;
 
     public const ushort SwingDamage = 0x2448;

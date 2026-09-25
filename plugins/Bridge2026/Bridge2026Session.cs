@@ -209,6 +209,19 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
+        // 0x4421 {u16 quest} = the tracker's "stop tracking" button. Same number as NC_QUEST_JOBDUNGEON_LINK_FAIL_CMD
+        // in 2016 (a zone-link packet), so never relayed; answered 0x4422 {0x30B8, quest}.
+        if (p.Opcode == Op.QuestUntrackReq && payload.Length == 2)
+        {
+            ctx.Drop();
+            var quest = (ushort)(payload[0] | (payload[1] << 8));
+            var had = _questChr is { } chr && _plugin.Tracker.Remove(chr, quest);
+            _questsAddedHere.Remove(quest);
+            ctx.ToClient(Op.QuestUntrackAck, UntrackPayload(quest));
+            _plugin.Log($"[{_info.ServiceName}] quest tracker: chr {_questChr} untrack {quest} ({(had ? "removed" : "was not tracked")})");
+            return;
+        }
+
         if (p.Opcode == U(Op.C26Version))
         {
             ctx.Drop();
@@ -397,14 +410,24 @@ internal sealed class Bridge2026Session : IPluginSession
         // QSC_DONE (the reward was given): a script may stop there with no END after it, and the 2026 dialog then
         // never closes - Continue did nothing on "Mischievous Monsters" (operator 2026-09-24). The client only
         // closes after 0x442E, so DONE is relayed and followed by one.
-        if (p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
-            && BitConverter.ToUInt32(payload, 2) == Op.QscDone && CloseDialogForClient)
+        // A tracked quest whose reward was given leaves the tracker; official says so with 0x4422 after the 0x442E.
+        var doneQuest = p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
+                        && BitConverter.ToUInt32(payload, 2) == Op.QscDone ? BitConverter.ToUInt16(payload, 0) : (ushort?)null;
+        if (doneQuest is { } dq)
+        {
+            _questsDoing?.Remove(dq);
+            _questsAddedHere.Remove(dq);
+        }
+
+        if (doneQuest is { } dq2 && CloseDialogForClient)
         {
             ctx.ToClient(Op.QuestCloseDialog, Op.QuestCloseDialogPayload);
             _closeSentAt = Environment.TickCount64;
-            _plugin.Log($"[{_info.ServiceName}] quest {BitConverter.ToUInt16(payload, 0)} script DONE -> 0x442E");
+            _plugin.Log($"[{_info.ServiceName}] quest {dq2} script DONE -> 0x442E");
+            UntrackDone(ctx, dq2);
             return;
         }
+        if (doneQuest is { } dq3) UntrackDone(ctx, dq3);
 
         if (p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
             && BitConverter.ToUInt32(payload, 2) == Op.QscEnd)
@@ -694,6 +717,16 @@ internal sealed class Bridge2026Session : IPluginSession
     }
 
     public void Dispose() { }
+
+    private static byte[] UntrackPayload(ushort quest)
+        => new[] { unchecked((byte)QuestTracker.Removed), (byte)(QuestTracker.Removed >> 8), (byte)quest, (byte)(quest >> 8) };
+
+    private void UntrackDone(PluginPacketContext ctx, ushort quest)
+    {
+        if (_questChr is not { } chr || !_plugin.Tracker.Remove(chr, quest)) return;
+        ctx.ToClient(Op.QuestUntrackAck, UntrackPayload(quest));
+        _plugin.Log($"[{_info.ServiceName}] quest tracker: chr {chr} quest {quest} done -> untracked (0x4422)");
+    }
 
     private IReadOnlySet<ushort>? ActiveQuests()
         => _questsDoing is null ? null : new HashSet<ushort>(_questsDoing.Concat(_questsAddedHere));
