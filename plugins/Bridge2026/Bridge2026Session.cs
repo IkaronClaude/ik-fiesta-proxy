@@ -50,6 +50,32 @@ internal sealed class Bridge2026Session : IPluginSession
     private byte _world;
     private readonly Dictionary<byte, uint> _avatars = new();   // slot -> chrregnum
     private readonly HashSet<byte> _usedSlots = new();
+    private readonly HashSet<int> _foldedEmpty = new();         // 2026 equip slots this client already has empty
+
+    /// <summary>
+    /// NC_ITEM_EQUIPCHANGE_CMD {u16 key, u8 2016 equip slot, item record} names the SERVER's slot, but the 2026
+    /// client draws an equipped item at the item's own 2026 Equip (Fiesta.exe 0x5AB150), and the server folds
+    /// 2026 slots 30-44 into 2016 ones (Wings of Darkness: 2026 slot 34, server slot 9). An unequip of slot 9 then
+    /// cleared the client's empty slot 9 and the wings stayed drawn at 34 (Q29, the client's unequip path
+    /// 0x761F20 clears only the slot it is told). So when a 2016 slot changes, every 2026 slot folded into it is
+    /// cleared too - except the one the newly equipped item itself is drawn at. Each is cleared at most once
+    /// until something is drawn there again.
+    /// </summary>
+    private void ClearFoldedSlots(PluginPacketContext ctx, byte[] payload)
+    {
+        if (payload.Length < 5) return;
+        var folded = _plugin.FoldedInto(payload[2]);
+        if (folded.Count == 0) return;
+        var item = BitConverter.ToUInt16(payload, 3);
+        var drawnAt = item == 0xFFFF ? -1 : _plugin.FoldedEquipOf(item);
+        if (drawnAt >= 0) _foldedEmpty.Remove(drawnAt);
+        foreach (var slot in folded)
+        {
+            if (slot == drawnAt || !_foldedEmpty.Add(slot)) continue;
+            ctx.ToClient(Op.ItemEquipChange, new byte[] { payload[0], payload[1], (byte)slot, 0xFF, 0xFF });
+            _plugin.Log($"[{_info.ServiceName}] 0x3002 slot {payload[2]}: also cleared the folded 2026 slot {slot}");
+        }
+    }
 
     public Bridge2026Session(Bridge2026Plugin plugin, PluginSessionInfo info)
     {
@@ -491,6 +517,7 @@ internal sealed class Bridge2026Session : IPluginSession
                     _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4}: item {BitConverter.ToUInt16(payload, at)} "
                                  + $"(class {_plugin.ClassOf(BitConverter.ToUInt16(payload, at))}) not translated, "
                                  + $"{payload.Length - at - 2} attribute bytes");
+                if (p.Opcode == Op.ItemEquipChange) ClearFoldedSlots(ctx, payload);
                 return;
             }
 

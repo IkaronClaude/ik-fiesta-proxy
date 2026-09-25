@@ -191,6 +191,7 @@ listener there the client hangs at 0 % on the loading screen.
 | `PORT_OFFSET` | added to every port handed to the client (10000) |
 | `CHECKSUMS` | the 49 table checksums the 2016 zone expects at map login - `deploy/bridge2026/zone-checksums.txt` |
 | `ITEM_CLASSES` | item id -> ItemInfo class of the 2026 client, to size inventory records - `deploy/bridge2026/item-classes.txt` |
+| `EQUIP_FOLD` | 2026 equip slots the server folds into 2016 slots + the items drawn at them, to clear what an unequip leaves drawn - `deploy/bridge2026/equip-fold.txt` |
 | `OPCODES` | the opcodes the 2016 build defines (FiestaLib-Reloaded's `all-enums.json`); without it nothing is filtered and the server hangs up on the first 2026-only frame |
 | `WORLD_STATUS` | force every world row's status byte (testing only) |
 

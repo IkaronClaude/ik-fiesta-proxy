@@ -31,6 +31,8 @@ public sealed class Bridge2026Plugin : IProxyPlugin
     private int _portOffset;
     private Dictionary<int, int>? _itemClass;
     private Dictionary<(int Quest, int Index), int>? _rewardSlot;
+    private Dictionary<int, int[]> _foldedInto = new();     // 2016 equip slot -> the 2026 slots the server folds into it
+    private Dictionary<int, int> _equip26 = new();          // item id -> its 2026 Equip, only where that is a folded slot
 
     public string Name => "bridge2026";
 
@@ -115,11 +117,32 @@ public sealed class Bridge2026Plugin : IProxyPlugin
                 host.Warn($"{Name}: no QUEST_REWARD_INDEX file - a chosen quest reward reaches the zone as the client's index "
                           + "and the player gets a different item");
             }
+
+            if (s.TryGetValue("EQUIP_FOLD", out var ef) && File.Exists(ef))
+            {
+                var fold = new Dictionary<int, List<int>>();
+                var equip = new Dictionary<int, int>();
+                foreach (var line in File.ReadAllLines(ef))
+                {
+                    var f = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (f.Length != 3 || !int.TryParse(f[1], out var a) || !int.TryParse(f[2], out var b)) continue;
+                    if (f[0] == "fold") (fold.TryGetValue(b, out var l) ? l : fold[b] = new List<int>()).Add(a);
+                    else if (f[0] == "item") equip[a] = b;
+                }
+                _foldedInto = fold.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray());
+                _equip26 = equip;
+                host.Info($"{Name}: {fold.Values.Sum(l => l.Count)} folded equip slots, {equip.Count} items drawn at them, from {ef}");
+            }
+            else
+            {
+                host.Warn($"{Name}: no EQUIP_FOLD file - unequipping an item the 2026 client draws at a 2026-only slot "
+                          + "(wings, cosmetic backs) leaves it drawn");
+            }
     }
 
     private void WatchGenerated()
     {
-        var dirs = new[] { "CHECKSUMS", "ITEM_CLASSES", "QUEST_REWARD_INDEX" }
+        var dirs = new[] { "CHECKSUMS", "ITEM_CLASSES", "QUEST_REWARD_INDEX", "EQUIP_FOLD" }
             .Select(k => _settings.TryGetValue(k, out var f) ? Path.GetDirectoryName(Path.GetFullPath(f)) : null)
             .Where(d => d != null && Directory.Exists(d)).Distinct().ToList();
         if (dirs.Count != 1) return;                   // bridge_data writes all three into one folder
@@ -223,6 +246,13 @@ public sealed class Bridge2026Plugin : IProxyPlugin
         => _itemClass is not null && _itemClass.TryGetValue(itemId, out var c) ? c : -1;
 
     public bool HasItemClasses => _itemClass is not null;
+
+    /// <summary>The 2026 equip slots the server folds into this 2016 slot (none for most slots).</summary>
+    public IReadOnlyList<int> FoldedInto(int slot2016)
+        => _foldedInto.TryGetValue(slot2016, out var a) ? a : Array.Empty<int>();
+
+    /// <summary>The 2026 slot the client draws this item at, when that is a folded slot; else -1.</summary>
+    public int FoldedEquipOf(int itemId) => _equip26.TryGetValue(itemId, out var e) ? e : -1;
 
     /// <summary>False only when an opcode list was supplied and this opcode is not in it.</summary>
     public bool IsKnownTo2016(ushort opcode) => _known2016 is null || _known2016.Contains(opcode);
