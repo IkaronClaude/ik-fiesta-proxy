@@ -196,6 +196,17 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
+        // Skill empower: the 2026 request is 14 B, the 2016 zone reads 6 - relayed as-is it stored an empty allocation.
+        if (p.Opcode == Op.SkillEmpowAllocReq && T.SkillEmpowAlloc2026To2016(payload) is { } emp)
+        {
+            ctx.Replace(emp);
+            var extra = T.SkillEmpowOtherNibbles(payload, 2) | T.SkillEmpowOtherNibbles(payload, 8);
+            _plugin.Log($"[{_info.ServiceName}] skill {BitConverter.ToUInt16(payload, 0)} empower {Convert.ToHexString(payload, 2, 12)}"
+                        + $" -> plus 0x{BitConverter.ToUInt16(emp, 2):X4} minus 0x{BitConverter.ToUInt16(emp, 4):X4}"
+                        + (extra != 0 ? $" (2026-only nibbles 0x{extra:X12} DROPPED)" : ""));
+            return;
+        }
+
         if (p.Opcode == U(Op.C26Version))
         {
             ctx.Drop();

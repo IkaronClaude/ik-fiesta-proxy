@@ -129,6 +129,8 @@ internal static class Op
     // 2026 QUEST TRACKER (see QuestTracker): the client's 0x441F {u16 quest} is a TRACK request (2016 has the number
     // as a zone RING packet), answered by 0x4420 {u16 result, u16 quest}; 0x110F lists the tracked set at login.
     public const ushort QuestTrackReq = 0x441f;
+    /// <summary>NC_SKILL_EMPOWALLOC_REQ: 14 B from the 2026 client, 6 B in 2016 (Translators.SkillEmpowAlloc2026To2016).</summary>
+    public const ushort SkillEmpowAllocReq = 0x4811;
     public const ushort QuestTrackAck = 0x4420;
     public const ushort QuestTrackList = 0x110f;
     public const ushort QuestUntrackReq = 0x4421;   // C->S {u16 quest}: the "stop tracking" button

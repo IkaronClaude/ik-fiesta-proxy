@@ -399,6 +399,38 @@ internal static class T
     }
 
     /// <summary>CLIENT_QUEST_DOING {chrregnum u32, flag u8, count u8} + entries.</summary>
+/// <summary>
+    /// NC_SKILL_EMPOWALLOC_REQ 0x4811, 2026 -> 2016. 2026 sends {skill u16, plus 6 B, minus 6 B}; 2016 wants {skill u16,
+    /// plus SKILL_EMPOWER, minus SKILL_EMPOWER} where SKILL_EMPOWER is a u16 of four nibbles damage, sp, keeptime,
+    /// cooltime. A 2026 block read as a 48-bit little-endian value holds those four in nibbles 7..10 - from the one
+    /// official request (live-20260919-201932: GreatSwing01 plus 00 00 00 00 50 00 = nibble 9, and the character's login
+    /// skill list then went 0x5005 -> 0x5505, keeptime) and ours (Magic Burst, nibble 10). Other nibbles are 2026-only
+    /// properties the 2016 zone has no field for: dropped, and logged by the session. Anything but 14 bytes -> null.
+    /// </summary>
+    public static byte[]? SkillEmpowAlloc2026To2016(byte[] p)
+    {
+        if (p.Length != 14) return null;
+        static ushort Block(byte[] p, int at)
+        {
+            ulong v = 0;
+            for (var i = 5; i >= 0; i--) v = (v << 8) | p[at + i];
+            return (ushort)((v >> 28) & 0xFFFF);          // nibbles 7..10
+        }
+        var o = new byte[6];
+        o[0] = p[0]; o[1] = p[1];
+        BinaryPrimitives.WriteUInt16LittleEndian(o.AsSpan(2), Block(p, 2));
+        BinaryPrimitives.WriteUInt16LittleEndian(o.AsSpan(4), Block(p, 8));
+        return o;
+    }
+
+    /// <summary>The 2026-only empower nibbles of a 0x4811 block (everything outside 7..10), for the log.</summary>
+    public static ulong SkillEmpowOtherNibbles(byte[] p, int at)
+    {
+        ulong v = 0;
+        for (var i = 5; i >= 0; i--) v = (v << 8) | p[at + i];
+        return v & ~(0xFFFFUL << 28);
+    }
+
     public static byte[]? QuestDoing2016To2026(byte[] p, Func<int, int[]?>? counterRows = null)
         => p.Length < 6 ? null : QuestList(p, p[5], counterRows);
 
