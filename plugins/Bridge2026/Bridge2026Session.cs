@@ -358,7 +358,7 @@ internal sealed class Bridge2026Session : IPluginSession
         }
 
         // Anything the 2016 build has no opcode for would make the server hang up.
-        if (!_plugin.IsKnownTo2016(p.Opcode))
+        if (!_plugin.IsKnownTo2016(p.Opcode) && !Op.HandledByZonePlugins.Contains(p.Opcode))
         {
             _plugin.Log($"[{_info.ServiceName}] dropped 0x{p.Opcode:X4} ({payload.Length} B): no such opcode in the 2016 build");
             ctx.Drop();
