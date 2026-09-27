@@ -353,10 +353,13 @@ internal sealed class Bridge2026Session : IPluginSession
             var sums = _plugin.Checksums;
             if (sums.Count == 0)
             {
-                _plugin.Warn($"[{_info.ServiceName}] MAP_LOGIN_REQ passed through untranslated: no checksum file configured, the zone will refuse it");
+                // no CHECKSUMS file: the zone checks the client's own checksums (zone plugin client_checksums) - forward
+                // them, each in its table's zone slot
+                if (T.MapLogin2026To2016Mapped(payload) is { } mm) ctx.Replace(mm);
+                else _plugin.Warn($"[{_info.ServiceName}] MAP_LOGIN_REQ of {payload.Length} B, not 1718 - passed through untranslated");
                 return;
             }
-            if (T.MapLogin2026To2016(payload, sums) is { } ml) ctx.Replace(ml);
+            if (T.MapLogin2026To2016(payload, sums) is { } ml) ctx.Replace(ml);     // legacy: stock zone, swap
             return;
         }
 

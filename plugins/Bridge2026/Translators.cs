@@ -168,7 +168,26 @@ internal static class T
 
     // ------------------------------------------------------------------ zone
 
-    /// <summary>1718 B (22 head + 53 checksums) -> 1590 B (22 head + the 49 the 2016 server wants).</summary>
+    /// <summary>
+    /// 1718 B -> 1590 B carrying the CLIENT'S OWN checksums, each in the zone slot of its table - for a zone that checks
+    /// them itself (zone plugin client_checksums + the server's ClientChecksums.txt, Fiesta2026on2016 2026-09-27).
+    /// The 2026 client's 53 (its list at Fiesta.exe 0xB6F504) are the zone's 49 in the same order minus MapLinkPoint and
+    /// MapWayPoint (zone slots 24, 25 - the 2026 client does not check them: 32 '0's, the plugin skips those slots),
+    /// followed by DeprecatedFiles + 5 quest tables the 2016 zone has no slot for (dropped).
+    /// </summary>
+    public static byte[]? MapLogin2026To2016Mapped(byte[] p)
+    {
+        if (p.Length != 22 + 53 * 32) return null;
+        var outp = new List<byte>(22 + 49 * 32);
+        outp.AddRange(Slice(p, 0, 22).ToArray());
+        outp.AddRange(Slice(p, 22, 24 * 32).ToArray());                    // zone slots 0..23 = client 0..23
+        for (int i = 0; i < 2 * 32; i++) outp.Add((byte)'0');               // zone 24, 25: not in the 2026 list
+        outp.AddRange(Slice(p, 22 + 24 * 32, 23 * 32).ToArray());           // zone 26..48 = client 24..46
+        return outp.ToArray();
+    }
+
+    /// <summary>1718 B (22 head + 53 checksums) -> 1590 B (22 head + the 49 the 2016 server wants) - the LEGACY swap
+    /// for a stock zone: the client's checksums are replaced by the zone's own (CHECKSUMS file).</summary>
     public static byte[]? MapLogin2026To2016(byte[] p, IReadOnlyList<byte[]> checksums)
     {
         if (p.Length < 22 + 32) return null;
