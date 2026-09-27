@@ -65,6 +65,25 @@ internal static class ItemAttr
         [38] = 14,   // bracelet        same parser
     };
 
+    /// <summary>
+    /// Where in the 2016 attribute block the 2026 build's extra byte goes, per class; classes not listed get it
+    /// immediately before the count byte (the end of the fixed part).
+    ///
+    /// Class 4 (amulet) is different. 2016 ShineItemAttr_Amulet: deletetime 0..3, IsPutOnBelonged 4..7, upgrade 8,
+    /// strengthen 9, upgradefailcount 10, UpgradeOption storage 11..35 (count byte 11), randomOptionChangedCount 36,
+    /// option storage (count byte 37). The official 2026 wire has the upgrade level at 9 and the UpgradeOption count
+    /// at 12 (3,700 market listings, store-official-ALL-20260918; bytes 0..8 zero in every one), so the byte is in
+    /// 0..8, not at the end. Putting it at the end (as for weapons/armour) shifted nothing before the rolled block:
+    /// the client read strengthen as the upgrade level (no [+N]) and the first upgrade-stat entry as the count
+    /// (operator 2026-09-27, enchanted jewellery showed no + and no stats). 8 keeps deletetime and IsPutOnBelonged
+    /// where 2016 has them; the exact spot inside 0..8 is unpinned until a time-limited or bound accessory is
+    /// captured on the official wire.
+    /// </summary>
+    private static readonly Dictionary<int, int> InsertAt2016 = new()
+    {
+        [4] = 8,
+    };
+
     /// <summary>Header bytes before the attribute block: datasize, location, item id.</summary>
     public const int RecordHead = 5;
 
@@ -107,11 +126,12 @@ internal static class ItemAttr
             var count = record[at + RecordHead + fixed2016 - 1] >> 1;
             if (attrLen != fixed2016 + count * 3) return null;   // not the shape this rule describes
 
+            // the byte the 2026 build added: before the count byte, or where InsertAt2016 says for this class
+            var ins = InsertAt2016.TryGetValue(cls, out var a) ? a : fixed2016 - 1;
             var outp = new byte[length + 1];
-            Array.Copy(record, at, outp, 0, RecordHead + fixed2016 - 1);   // head + fixed part up to the count
-            outp[RecordHead + fixed2016 - 1] = 0;                          // the byte the 2026 build added
-            Array.Copy(record, at + RecordHead + fixed2016 - 1,
-                       outp, RecordHead + fixed2016, attrLen - (fixed2016 - 1));  // count byte and entries
+            Array.Copy(record, at, outp, 0, RecordHead + ins);                  // head + attributes before it
+            outp[RecordHead + ins] = 0;
+            Array.Copy(record, at + RecordHead + ins, outp, RecordHead + ins + 1, attrLen - ins);   // the rest
             outp[0] = (byte)(outp.Length - 1);                             // datasize stays length - 1
             return outp;
         }

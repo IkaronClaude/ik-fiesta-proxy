@@ -22,6 +22,7 @@ public class ItemAttributeTests
         64599 => Weapon,               // IblisAxe
         64612 or 64613 => Boots,       // IblisPants, IblisBoots (class 8)
         31000 => 26,                   // House_MushRoom, a constant-width class
+        41511 => Amulet,               // D_ZombieRing06
         _ => -1,
     };
 
@@ -310,4 +311,30 @@ public class ItemAttributeTests
         outp.Length.ShouldBe(106);
         Convert.ToHexString(outp).ShouldStartWith("0000" + "01" + "C501" + "000000000000000000000000" + "00" + Opts453);
     }
+
+    // NC_ITEM_CELLCHANGE_CMD as our zone sent it at 10:33:34 on 2026-09-27: D_ZombieRing06 (41511, class 4)
+    // enchanted to +3. 2016 amulet: deletetime, IsPutOnBelonged, upgrade 03 at 8, strengthen, failcount, the
+    // UpgradeOption storage (count byte 07 = 3 entries: DEX 1, STR 1, SPR 2), randomOptionChangedCount, then the
+    // rolled option storage (count byte 09 = 4 entries).
+    private static readonly byte[] CellChangeRing = Convert.FromHexString(
+        "B524B524" + "27A2" + "00000000" + "00000000" + "03" + "0000" + "07" + "020100" + "000100" + "040200" +
+        new string('0', 2 * 15) + "00" + "09" + "030B00" + "020B00" + "040400" + "000400");
+
+    [Fact]
+    public void An_accessory_gets_the_2026_byte_before_its_upgrade_level()
+    {
+        // Official 2026 accessory: upgrade level at attribute 9, UpgradeOption count at 12 (3,700 market listings).
+        // The weapon/armour rule put the byte before the LAST count, which left the upgrade at 8: the client
+        // read strengthen as the level (no [+3]) and DEX's type byte as the count.
+        var outp = ItemAttr.TrailingItem2016To2026(CellChangeRing, 4, ClassOf);
+
+        outp.ShouldNotBeNull();
+        var attr = outp!.AsSpan(6);
+        attr[9].ShouldBe((byte)3);         // upgrade level
+        attr[12].ShouldBe((byte)7);        // UpgradeOption count byte: 3 entries
+        attr[13].ShouldBe((byte)2);        // first entry: DEX
+        attr[38].ShouldBe((byte)9);        // rolled option count byte, last of the 39-byte fixed part
+        (outp.Length - 6).ShouldBe(ItemAttr.Width2026(Amulet, attr));
+    }
+
 }
