@@ -56,7 +56,9 @@ $env:BRIDGE2026_CLOSE_DIALOG = if ($NoDialogClose) { "0" } else { "1" }
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_LOGIN_PORT  = "19010"
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_ADVERTISE   = $Advertise
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_PORT_OFFSET = "10000"
-$env:FIESTAPROXY_PLUGIN_BRIDGE2026_CHECKSUMS   = "$root/deploy/bridge2026/zone-checksums.txt"
+# no CHECKSUMS: the zones register the client's own table checksums (zone plugin client_tables), so the bridge forwards the
+# client's real ones. The old swap list (deploy/bridge2026/zone-checksums.txt) now causes "illegally manipulated".
+Remove-Item Env:FIESTAPROXY_PLUGIN_BRIDGE2026_CHECKSUMS -ErrorAction SilentlyContinue
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_ITEM_CLASSES = "$root/deploy/bridge2026/item-classes.txt"
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_QUEST_REWARD_INDEX = "$root/deploy/bridge2026/quest-reward-index.txt"
 $env:FIESTAPROXY_PLUGIN_BRIDGE2026_EQUIP_FOLD   = "$root/deploy/bridge2026/equip-fold.txt"
