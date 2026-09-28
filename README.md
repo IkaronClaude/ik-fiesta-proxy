@@ -119,6 +119,38 @@ every connection (and every packet rewrite that needs an address) so DNS-based
 scale events propagate without a restart. The trailing `:opaque` on the Zone
 route skips frame parsing — see *Traffic model* above.
 
+## Configuration (file) and running as a Windows service
+
+Where there is no environment to set — a registered Windows service, a double-clicked exe — the same settings come
+from **`FiestaProxy.conf`** beside the exe (or `--config <file>`). It is translated into the environment variables
+above, in-process, before anything starts; a variable already set in the environment wins, so docker / k8s setups are
+unaffected. The routes are read from the fronted server's own `ServerInfo.txt`: every client-facing `SERVER_INFO`
+row (kind 20, the stock file's `PUBLIC_IP` lines) becomes a route — type 4 `Login`, 5 `WorldManager_<world>`,
+6 `Zone_<world>_<zone>` — listening on the server's port + `PORT_OFFSET`.
+
+```
+; FiestaProxy.conf   (; = comment, paths relative to this file)
+#include "..\ServerSource\9Data\ServerInfo\ServerInfo.txt"   ; the server this proxy fronts
+ADVERTISE_IP   192.168.1.10      ; what players dial (-> PUBLIC_IP)
+PORT_OFFSET    10000             ; player port = server port + this (default 10000)
+MODE           bridge            ; bridge | rewrite | opaque (default bridge)
+; LISTEN       Zone_0_3 29025    ; one service's player port, overriding the offset
+; UPSTREAM_HOST 10.0.0.5         ; dial the server here instead of ServerInfo's IP
+PATH XOR_TABLE_PATH xor-table.hex                            ; PATH = resolved against the conf folder
+SET  FIESTAPROXY_PLUGIN_BRIDGE2026_LOGIN_PORT ${LISTEN_Login} ; SET = any variable; ${...} expands the
+SET  FIESTAPROXY_PLUGIN_BRIDGE2026_ADVERTISE  ${ADVERTISE_IP} ;   directives, LISTEN_<service>, CONF_DIR
+```
+
+```
+FiestaProxy.exe --check                      print the variables the conf stands for, and exit
+FiestaProxy.exe --install [--name N]         register a Windows service (ADMIN prompt): auto start, restart on
+                                             failure; the conf is checked first. N defaults to FiestaProxy
+FiestaProxy.exe --uninstall [--name N]       stop + unregister it
+```
+
+As a service it logs to `FiestaProxy.log` beside the exe (the previous run is kept as `FiestaProxy.log.1`). If the
+proxy cannot start (bad conf, port taken) the service stops, so the SCM shows it and its restart action applies.
+
 ## Plugins
 
 A rewriter handles the simple case: one server-to-client opcode, edited in place, no state. Anything more -

@@ -6,8 +6,61 @@ namespace FiestaProxy;
 
 internal static class Program
 {
+    // FiestaProxy.exe                         settings from the environment, else FiestaProxy.conf beside the exe
+    //                 --config <file>          settings from this conf file (Config/ConfFile.cs)
+    //                 --install [--name N]     register as a Windows service (admin), reading the conf; N = FiestaProxy
+    //                 --uninstall [--name N]   stop + unregister it
+    //                 --check                  print the settings the conf stands for and exit
+    //                 --service                (the SCM's command line - not for people)
     private static async Task<int> Main(string[] args)
     {
+        string? Opt(string name)
+        {
+            var i = Array.FindIndex(args, a => a.Equals(name, StringComparison.OrdinalIgnoreCase));
+            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+        }
+        bool Has(string name) => args.Any(a => a.Equals(name, StringComparison.OrdinalIgnoreCase));
+        var confArg = Opt("--config");
+        var name = Opt("--name") ?? "FiestaProxy";
+
+        if (Has("--install") || Has("--uninstall"))
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                Console.Error.WriteLine("--install / --uninstall register a Windows service; on Linux use a systemd unit running the exe.");
+                return 1;
+            }
+            return Has("--install") ? Service.ProxyService.Install(name, confArg) : Service.ProxyService.Uninstall(name);
+        }
+        if (Has("--check"))
+        {
+            var conf = ConfFile.Locate(confArg);
+            if (conf is null) { Console.Error.WriteLine($"no {ConfFile.DefaultName} beside the exe and no --config"); return 1; }
+            foreach (var (k, v) in ConfFile.Parse(conf)) Console.WriteLine($"{k}={v}");
+            return 0;
+        }
+        if (Has("--service"))
+        {
+            if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("--service is Windows only"); return 1; }
+            Log.ToFile(Service.ProxyService.LogFilePath());
+            System.ServiceProcess.ServiceBase.Run(new Service.ProxyService(name, ct => RunAsync(confArg, ct)));
+            return 0;
+        }
+
+        var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        return await RunAsync(confArg, cts.Token);
+    }
+
+    private static async Task<int> RunAsync(string? confArg, CancellationToken token)
+    {
+        var confPath = ConfFile.Locate(confArg);
+        if (confPath is not null)
+        {
+            Log.Info($"config file {confPath}");
+            foreach (var line in ConfFile.Apply(confPath))
+                Log.Info($"  {line}");
+        }
         var config = ProxyConfig.FromEnvironment();
         Net.PacketLog.Enabled = config.PacketLogEnabled;
         if (int.TryParse(Environment.GetEnvironmentVariable("PROXY_PACKET_LOG_BYTES"), out var logBytes) && logBytes >= 0)
@@ -38,14 +91,11 @@ internal static class Program
         else if (config.Routes.Any(r => r.Mode == RouteMode.Bridge))
             Log.Warn($"A bridge route is configured but no plugin loaded from {PluginHost.DefaultDirectory}");
 
-        var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-
         var tasks = new List<Task>();
         foreach (var r in config.Routes)
-            tasks.Add(Watch(new ProxyListener(r, config, plugins).RunAsync(cts.Token), r.ServiceName, r.ListenPort));
+            tasks.Add(Watch(new ProxyListener(r, config, plugins).RunAsync(token), r.ServiceName, r.ListenPort));
         foreach (var r in config.S2sRoutes)
-            tasks.Add(new S2sListener(r, config.S2sAllowedCidrs, config.UpstreamConnectTimeout).RunAsync(cts.Token));
+            tasks.Add(new S2sListener(r, config.S2sAllowedCidrs, config.UpstreamConnectTimeout).RunAsync(token));
 
         try { await Task.WhenAll(tasks); }
         catch (OperationCanceledException) { }
