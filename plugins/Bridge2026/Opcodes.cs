@@ -105,6 +105,11 @@ internal static class Op
     public const ushort ChargedBuffStart = 0x9003;        // NC_CHARGED_BUFFSTART_CMD
     public const ushort ChargedBuffTerminate = 0x9004;    // NC_CHARGED_BUFFTERMINATE_CMD
     public const ushort RewardInvenAck = 0x302d;
+    /// <summary>NC_GUILD_MEMBER_LIST_ACK: 2016 head {total u16, start u16, count u16}, 2026 head {flag u8, count u16};
+    /// the 110-byte member records are the same (see <see cref="Translators.GuildMemberList2016To2026"/>).</summary>
+    public const ushort GuildMemberList = 0x741b;
+    /// <summary>NC_CHAR_GUILD_ACADEMY_CMD: a guild's academy block, 741 B from our WM, 745 B on the official wire.</summary>
+    public const ushort GuildAcademyInfo = 0x1097;
     public const ushort RegenMob = 0x1c08;
     public const ushort MobCmd = 0x1c09;
     public const ushort LoginCharacter = 0x1c06;

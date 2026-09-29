@@ -436,6 +436,43 @@ public class TranslatorTests
     }
 
     [Fact]
+    public void Guild_member_list_head_becomes_flag_and_count()
+    {
+        // ours for a one-member guild (Annaaa): {total 1, start 0, count 1} + one 110-byte record
+        var rec = new byte[110];
+        rec[0] = (byte)'A';
+        var outp = T.GuildMemberList2016To2026(Concat(Hex("010000000100"), rec), out var last)!;
+        outp.Length.ShouldBe(3 + 110);
+        outp.AsSpan(0, 3).ToArray().ShouldBe(Hex("010100"));      // first chunk, 1 member
+        outp[3].ShouldBe((byte)'A');
+        last.ShouldBeTrue();
+        T.GuildMemberListEnd.ShouldBe(Hex("000000"));
+    }
+
+    [Fact]
+    public void Guild_member_list_later_chunk_has_flag_zero_and_bad_shapes_are_left_alone()
+    {
+        var two = new byte[220];
+        var outp = T.GuildMemberList2016To2026(Concat(Hex("050003000200"), two), out var last)!;
+        outp[0].ShouldBe((byte)0);
+        last.ShouldBeTrue();
+        T.GuildMemberList2016To2026(Hex("0100000001"), out _).ShouldBeNull();
+        T.GuildMemberList2016To2026(Concat(Hex("010000000100"), new byte[109]), out _).ShouldBeNull();
+    }
+
+    [Fact]
+    public void Guild_academy_block_is_padded_to_the_official_745_bytes()
+    {
+        var src = new byte[741];
+        src[41] = 0xAB;                                    // the first intro byte
+        var o = T.GuildAcademyInfo2016To2026(src)!;
+        o.Length.ShouldBe(745);
+        o.AsSpan(41, 4).ToArray().ShouldBe(new byte[4]);   // the 2026 field
+        o[45].ShouldBe((byte)0xAB);                        // intro moved 4 later, as on the official wire
+        T.GuildAcademyInfo2016To2026(new byte[5]).ShouldBeNull();       // no guild: same on both sides
+    }
+
+    [Fact]
     public void A_quest_without_moved_rows_is_copied_as_before()
     {
         var q = Hex("180008f1377a6a000000009a397a6a0000000001000000000003000000000000");

@@ -613,6 +613,21 @@ internal sealed class Bridge2026Session : IPluginSession
                     _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4} not translated: {why}");
                 return;
             }
+            case Op.GuildMemberList:
+                if (T.GuildMemberList2016To2026(payload, out var lastChunk) is { } gml)
+                {
+                    ctx.Replace(gml);
+                    if (lastChunk) ctx.ToClient(Op.GuildMemberList, T.GuildMemberListEnd);
+                    _plugin.Log($"[{_info.ServiceName}] 0x741B guild member list: {gml[1] | (gml[2] << 8)} member(s), flag {gml[0]}"
+                                + (lastChunk ? " + closing empty chunk" : ""));
+                }
+                else
+                    _plugin.Log($"[{_info.ServiceName}] 0x741B guild member list not translated ({payload.Length} B)");
+                return;
+            case Op.GuildAcademyInfo when T.GuildAcademyInfo2016To2026(payload) is { } gai:
+                ctx.Replace(gai);
+                return;
+
             case Op.RewardInvenAck when IsUsBuild && T.RewardInven2016To2026(payload) is { } ri:
                 ctx.Replace(ri);                       // no item table loaded: the empty case still works
                 return;

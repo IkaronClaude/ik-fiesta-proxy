@@ -336,6 +336,54 @@ internal static class T
     /// and the high half whatever followed. The US empty frame is `00 00 00 00 00 00 3f 41`.
     /// Only the count byte of the 2016 pair is meaningful; the second byte varies per session.
     /// </summary>
+    /// <summary>
+    /// NC_GUILD_MEMBER_LIST_ACK 0x741B. 2016: {total u16, start u16, count u16} + count x 110 B. 2026 (official wire,
+    /// every capture of a guild character): {flag u8, count u16} + count x 110 B - `01 26 00` + 38 members, then
+    /// `00 03 00` + 3 more (sizes 3 + 110n: 4183, 663, 333). Relayed raw, the 2026 client read our `01 00 00 00 01 00`
+    /// as flag 1 / count 0 - an empty member list. (Fixed alongside the academy block below, which was the actual
+    /// login crash; this one alone did not stop it.) The flag is 1 on the first chunk and
+    /// 0 on the last; whether it means "first" or "more follow" no official sample tells (each had two chunks), so a
+    /// 2016 chunk starting at 0 goes out with flag 1 and the session closes the list with an empty flag-0 frame -
+    /// right under either reading. Null for any other shape. <paramref name="last"/> = this 2016 chunk ends the list.
+    /// </summary>
+    public const int GuildMemberRecord = 110;
+
+    public static byte[]? GuildMemberList2016To2026(byte[] p, out bool last)
+    {
+        last = false;
+        if (p.Length < 6) return null;
+        int total = p[0] | (p[1] << 8), start = p[2] | (p[3] << 8), n = p[4] | (p[5] << 8);
+        if (p.Length != 6 + n * GuildMemberRecord) return null;
+        last = start + n >= total;
+        var o = new byte[3 + n * GuildMemberRecord];
+        o[0] = (byte)(start == 0 ? 1 : 0);
+        o[1] = p[4];
+        o[2] = p[5];
+        Array.Copy(p, 6, o, 3, n * GuildMemberRecord);
+        return o;
+    }
+
+    /// <summary>The empty closing chunk sent after the last translated member-list chunk.</summary>
+    public static readonly byte[] GuildMemberListEnd = { 0, 0, 0 };
+
+    /// <summary>
+    /// NC_CHAR_GUILD_ACADEMY_CMD 0x1097 for a guild character: our WM sends 741 B, official 745 B (six captures).
+    /// 2016 = {academy no u32, is member u8} + GUILD_ACADEMY_CLIENT 736 B (PDB: master name 20, members u16, max u16,
+    /// point u32, rank u32, buff-until u32 @32, intro[128] @36, notify date/tm, notify char, notify[512]). On the official
+    /// wire the intro, notify char ("Ayue" @213) and notify text ("Willkommen..." @233) all sit 4 bytes later than that:
+    /// 2026 added a u32 after buff-until. So 4 zero bytes go in at payload offset 5 + 36 = 41. The 5-byte no-guild form
+    /// is the same on both sides and passes through.
+    /// THIS WAS THE GUILD LOGIN CRASH (operator 2026-09-29): relayed raw, or padded at the END instead, the 2026 client
+    /// quit ~3 s into the map with no dump for every character in a guild (Annaaa, right after founding one). Proven by
+    /// elimination: the member-list fix and 4 bytes appended at the end still crashed; the pad at 41 alone stopped it
+    /// (the no-emblem frame `FF FF 04` was dropped in one test and restored - harmless).
+    /// </summary>
+    public const int AcademyNewFieldAt = 5 + 36;
+
+    public static byte[]? GuildAcademyInfo2016To2026(byte[] p)
+        => p.Length != 741 ? null : Concat(Slice(p, 0, AcademyNewFieldAt), new byte[4], Slice(p, AcademyNewFieldAt));
+
+
     public static byte[]? RewardInven2016To2026(byte[] p)
         => p.Length != 2 || p[0] != 0 ? null : Concat(new byte[6], RewardInvenTail);
 
