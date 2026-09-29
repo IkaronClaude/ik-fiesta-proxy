@@ -110,6 +110,11 @@ internal static class Op
     public const ushort LoginCharacter = 0x1c06;
     public const ushort CharacterList = 0x1c07;
     public const ushort RegenMover = 0x1c1a;
+    public const ushort AbStateSet = 0x2427;           // NC_BAT_ABSTATESET_CMD {handle u16, index u32}
+    public const ushort AbStateReset = 0x2428;         // NC_BAT_ABSTATERESET_CMD
+    public const ushort BriefAbStateChange = 0x1c18;   // NC_BRIEFINFO_ABSTATE_CHANGE_CMD {handle, ABSTATE_INFORMATION}
+    public const ushort BriefAbStateList = 0x1c19;     // NC_BRIEFINFO_ABSTATE_CHANGE_LIST_CMD {handle, n, n x 12}
+    public const ushort BriefInfoDelete = 0x1c0e;      // NC_BRIEFINFO_BRIEFINFODELETE_CMD {handle}
     /// <summary>NC_QUEST_JOBDUNGEON_FIND_RNG: 2 bytes from the 2026 client, 115 in the 2016 build.</summary>
     public const ushort QuestScriptCmdReq = 0x4401;   // S->C: the server asks the client to run a script command
     public const ushort QuestScriptCmdAck = 0x4402;   // C->S: {u16 nQuestID, u8 nQSC, u32 nResult}

@@ -25,6 +25,7 @@ internal sealed class Bridge2026Session : IPluginSession
 {
 
     private readonly Bridge2026Plugin _plugin;
+    private readonly ExtraAbStates _extraStates = new();
     private readonly PluginSessionInfo _info;
     private readonly bool _isLoginStage;
 
@@ -431,6 +432,7 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
+        _extraStates.Observe(p.Opcode, payload);   // states >= 792 per handle, for the brief-info bitset below
         switch (p.Opcode)
         {
             case Op.VersionAck16:
@@ -522,6 +524,7 @@ internal sealed class Bridge2026Session : IPluginSession
                 return;
 
             case Op.LoginCharacter when T.LoginCharacter2016To2026(payload, UsExtra) is { } lc:
+                _extraStates.Fill(lc, 0, T.LoginCharacterExtraBitsAt);
                 ctx.Replace(lc);
                 return;
 
@@ -659,6 +662,12 @@ internal sealed class Bridge2026Session : IPluginSession
                 return;
 
             case Op.CharacterList when T.CharacterList2016To2026(payload, UsExtra) is { } cl:
+                for (int i = 0, len = T.LoginCharacter2026Length(UsExtra); 1 + (i + 1) * len <= cl.Length; i++)
+                {
+                    var rec = new byte[len];
+                    Array.Copy(cl, 1 + i * len, rec, 0, len);
+                    if (_extraStates.Fill(rec, 0, T.LoginCharacterExtraBitsAt) > 0) Array.Copy(rec, 0, cl, 1 + i * len, len);
+                }
                 ctx.Replace(cl);
                 return;
 

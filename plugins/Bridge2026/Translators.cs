@@ -254,6 +254,11 @@ internal static class T
     /// polymorph/emoticon/title, one byte, the abstate bits, the tail (guild @258, level @265, animation
     /// @266, mover @298, KQ team @301) and two bytes. The US build's extra byte goes in the abstate padding.
     /// </summary>
+    /// <summary>Where the translated LOGINCHARACTER record's 37 extra state-bitset bytes start (bits 792-1087):
+    /// 82 + 31 + 9 + 1 + the 99 old bitset bytes.</summary>
+    public const int LoginCharacterExtraBitsAt = 222;
+    public static int LoginCharacter2026Length(int extra) => 304 + extra;
+
     public static byte[]? LoginCharacter2016To2026(byte[] p, int extra)
         => p.Length != 235 ? null
            : Concat(Slice(p, 0, 82), new byte[31], Slice(p, 82, 91 - 82), new byte[1], Slice(p, 91, 190 - 91), new byte[36 + extra],
