@@ -247,11 +247,14 @@ look). Each is plain text, `#` starts a comment:
 | `zone-checksums.txt` | 49 x `<32 hex>` in the zone's order | OPTIONAL, legacy: the table checksums a STOCK 2016 zone compares at map login; with it set, the bridge swaps them into the client's login. Leave it unset when the zone runs the `client_tables` hook plugin (ik-fiesta-patch-recipes), which registers the client's own checksums - a stale file here causes "Client has been illegally manipulated" | your server's `9Data/Shine` (MD5 of header + decrypted body per table) |
 | `all-enums.json` (`OPCODES`) | JSON | the protocol's opcode names per department | your server PDBs, via FiestaLib-Reloaded's extractor (see its README) |
 
-The first five are written by `bridge_data.py` from the Fiesta2026on2016 toolset, run against your own trees:
+The first five are written by **`tools/bridge_data/bridge_data.py`** (in this repo; standalone - Python 3 only),
+run against your own trees:
 
 ```bash
-python tools/bridge_data.py --server <your deployed 9Data> --client26 <your 2026 client root> --out deploy/bridge2026
+python tools/bridge_data/bridge_data.py --server <your server>/9Data --client26 <your 2026 client folder> --out deploy/bridge2026
 ```
+
+`EQUIP_REMAP` at the top of it is the 2026 -> 2016 equip-slot fold; edit it if your server folds differently.
 
 Rerun it whenever your server or client tables change. The formats above are complete, so any tool that reads your
 tables can produce the files instead.
