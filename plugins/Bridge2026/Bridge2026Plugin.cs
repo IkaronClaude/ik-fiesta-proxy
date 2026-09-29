@@ -127,7 +127,7 @@ public sealed class Bridge2026Plugin : IProxyPlugin
                     var t = line.Trim();
                     if (t.Length == 0 || t[0] == '#') continue;
                     var f = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    if (f.Length == 6 && int.TryParse(f[0], out var q)
+                    if (f.Length is 6 or 8 && int.TryParse(f[0], out var q)
                         && f.Skip(1).All(x => int.TryParse(x, out _)))
                         map[q] = f.Skip(1).Select(int.Parse).ToArray();
                 }

@@ -417,9 +417,10 @@ internal static class T
         // The 2016 record could not hold every end row of this quest (merge_quests END_OVERFLOW dropped the hand-in
         // row), so zone counter slot k belongs to the 2026 client's row rows[k]. The 2026 entry is 5 bytes longer:
         // read as a 10-byte counter array at 24 (2026 quests have up to 8 end rows). Only these quests are moved.
-        for (var k = 0; k < 5; k++) dst[to + 24 + k] = 0;
-        for (var k = 0; k < rows.Length && k < 5; k++)
-            if (rows[k] is >= 0 and < 10) dst[to + 24 + rows[k]] = src[at + 24 + k];
+        // Slots 5 and 6 (a 7-entry map) are the two extra kill rows quest_ext counts in End_RunningTimeSec (bytes 30, 31).
+        for (var k = 0; k < 10; k++) dst[to + 24 + k] = 0;
+        for (var k = 0; k < rows.Length && k < 7; k++)
+            if (rows[k] is >= 0 and < 10) dst[to + 24 + rows[k]] = src[at + (k < 5 ? 24 + k : 30 + k - 5)];
     }
 
     /// <summary>CLIENT_QUEST_DOING {chrregnum u32, flag u8, count u8} + entries.</summary>

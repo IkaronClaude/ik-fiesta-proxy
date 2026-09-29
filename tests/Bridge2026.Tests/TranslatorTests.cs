@@ -414,6 +414,28 @@ public class TranslatorTests
     }
 
     [Fact]
+    public void The_two_extra_kill_rows_come_from_the_running_time_bytes()
+    {
+        // 4313: talk + 7 kills; the zone record holds kills 1-5, quest_ext counts kills 6-7 in End_RunningTimeSec
+        // (entry bytes 30, 31) - quest-counter-rows.txt "4313 1 2 3 4 5 6 7".
+        var q = new byte[32];
+        q[0] = 0xD9; q[1] = 0x10;                          // quest 4313
+        q[2] = 6;
+        for (var k = 0; k < 5; k++) q[24 + k] = (byte)(10 + k);
+        q[29] = 0xFF;                                       // End_Scenario bits: not a counter
+        q[30] = 3; q[31] = 4;
+        int[]? Rows(int quest) => quest == 4313 ? new[] { 1, 2, 3, 4, 5, 6, 7 } : null;
+
+        var outp = T.QuestDoing2016To2026(Concat(Hex("cd0b00000101"), q), Rows)!;
+
+        outp[6 + 24].ShouldBe((byte)0);
+        for (var k = 0; k < 5; k++) outp[6 + 25 + k].ShouldBe((byte)(10 + k));
+        outp[6 + 30].ShouldBe((byte)3);
+        outp[6 + 31].ShouldBe((byte)4);
+        outp.AsSpan(6 + 32, 5).ToArray().ShouldBe(new byte[5]);
+    }
+
+    [Fact]
     public void A_quest_without_moved_rows_is_copied_as_before()
     {
         var q = Hex("180008f1377a6a000000009a397a6a0000000001000000000003000000000000");

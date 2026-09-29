@@ -157,8 +157,11 @@ def reward_index(shine, client26, out):
 
 def counter_rows(shine, client26, out):
     rows = {}
+    kills = {}
     for r in shn.read(os.path.join(client26, 'ressystem', 'QuestEndNpc.shn'))['rows']:   # file order = client row
         rows.setdefault(r['ID'], []).append((r['MobID'], r['NpcMobActionType']))
+        if r['IsEnabled'] and r['NpcMobActionType'] == 1 and r['Count']:
+            kills.setdefault(r['ID'], []).append(len(rows[r['ID']]) - 1)
     lines = []
     for q in qd.read(os.path.join(shine, 'QuestData.shn')):
         client = rows.get(q['ID'], [])
@@ -170,10 +173,14 @@ def counter_rows(shine, client26, out):
             hit = next((i for i, c in enumerate(client) if i not in used and c == (m['NPCMobID'], m['NPCMobAction'])), k)
             used.add(hit)
             want.append(hit)
+        # quest_ext counts an untimed quest's kill rows past the 5 (file order, at most 2) in End_RunningTimeSec: zone
+        # counter slots 5 and 6 (entry bytes 30, 31)
+        if not q['end']['bTimeLimit'] and len(kills.get(q['ID'], [])) > 5:
+            want += [i for i in kills[q['ID']] if i not in used][:2]
         if want != list(range(5)):
             lines.append('%d %s' % (q['ID'], ' '.join(str(i) for i in want)))
     with open(out, 'w', newline='') as f:
-        f.write('# quest, then the 2026 client QuestEndNpc row of each of the zone counter slots (only quests where they'
+        f.write('# quest, then the 2026 client QuestEndNpc row of each zone counter slot (5, or 7 with the two extra kill rows quest_ext counts) (only quests where they'
                 + NL + '# differ). %d quests.' % len(lines) + NL + NL.join(lines) + NL)
     return len(lines)
 
