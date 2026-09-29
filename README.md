@@ -221,25 +221,40 @@ listener there the client hangs at 0 % on the loading screen.
 | `LOGIN_PORT` | the listen port that is the login stage (default 9010; the script uses 19010) |
 | `ADVERTISE` | the host the client should dial for WM and zones - the client's view of this machine, never 127.0.0.1 |
 | `PORT_OFFSET` | added to every port handed to the client (10000) |
-| `CHECKSUMS` | the 49 table checksums the 2016 zone expects at map login - `deploy/bridge2026/zone-checksums.txt` |
-| `ITEM_CLASSES` | item id -> ItemInfo class of the 2026 client, to size inventory records - `deploy/bridge2026/item-classes.txt` |
-| `EQUIP_FOLD` | 2026 equip slots the server folds into 2016 slots + the items drawn at them, to clear what an unequip leaves drawn - `deploy/bridge2026/equip-fold.txt` |
-| `OPCODES` | the opcodes the 2016 build defines (FiestaLib-Reloaded's `all-enums.json`); without it nothing is filtered and the server hangs up on the first 2026-only frame |
+| `ITEM_CLASSES` | `item-classes.txt` (required) - see *Data files* |
+| `QUEST_REWARD_INDEX` | `quest-reward-index.txt` - see *Data files* |
+| `EQUIP_FOLD` | `equip-fold.txt` - see *Data files* |
+| `QUEST_COUNTER_ROWS` | `quest-counter-rows.txt` - see *Data files* |
+| `OPCODES` | FiestaLib-Reloaded's `docs/extracted/merged/all-enums.json` (required): the opcodes the 2016 build defines; without it nothing is filtered and the server hangs up on the first 2026-only frame |
+| `CHECKSUMS` | `zone-checksums.txt` (optional, legacy) - see *Data files* |
 | `WORLD_STATUS` | force every world row's status byte (testing only) |
 
 `BRIDGE2026_CLOSE_DIALOG=0` (the script's `-NoDialogClose`) stops the bridge sending the 2026 client its
 quest-page close (`0x442E`).
 
-**The two data files describe YOUR server and client**, and are generated, not hand-edited. The committed ones
-match the Fiesta2026on2016 build; after rebuilding the server tables, regenerate them:
+### Data files (generated from YOUR files - never shipped)
+
+This repository ships **no game data**. Everything the plugin needs to know about your server and client is generated
+locally from your own files and read at start-up (the files are gitignored; `deploy/bridge2026/` is where the scripts
+look). Each is plain text, `#` starts a comment:
+
+| file | line format | what it is | generated from |
+| --- | --- | --- | --- |
+| `item-classes.txt` | `<item id> <class>` | item id -> the 2026 client's ItemInfo `Class`; the client sizes each inventory record by it | your 2026 client's `ressystem/ItemInfo.shn` |
+| `quest-reward-index.txt` | `<quest> <2026 reward row> <2016 reward slot>` | maps the 2026 client's chosen-reward index to the 2016 `QUEST_DATA.Reward` slot (only quests with a choice) | your 2026 client's `QuestReward.shn` + your server's `QuestData.shn` |
+| `equip-fold.txt` | `fold <2026 slot> <2016 slot>` / `item <item id> <2026 slot>` | the 2026 equip slots your server folds into 2016 slots, and the items drawn at them (so an unequip clears the right slot) | your 2026 client's `ItemInfo.shn` + your merge's slot map |
+| `quest-counter-rows.txt` | `<quest> <row for counter 1> ... <row for counter 5>` | where each zone kill counter sits in the 2026 client's `QuestEndNpc` rows, for quests where they differ | your 2026 client's `QuestEndNpc.shn` + your server's `QuestData.shn` |
+| `zone-checksums.txt` | 49 x `<32 hex>` in the zone's order | OPTIONAL, legacy: the table checksums a STOCK 2016 zone compares at map login; with it set, the bridge swaps them into the client's login. Leave it unset when the zone runs the `client_tables` hook plugin (ik-fiesta-patch-recipes), which registers the client's own checksums - a stale file here causes "Client has been illegally manipulated" | your server's `9Data/Shine` (MD5 of header + decrypted body per table) |
+| `all-enums.json` (`OPCODES`) | JSON | the protocol's opcode names per department | your server PDBs, via FiestaLib-Reloaded's extractor (see its README) |
+
+The first five are written by `bridge_data.py` from the Fiesta2026on2016 toolset, run against your own trees:
 
 ```bash
-python <Fiesta2026on2016>/tools/bridge_data.py --server <the deployed 9Data> --client26 <2026 client root> \
-    --out deploy/bridge2026
+python tools/bridge_data.py --server <your deployed 9Data> --client26 <your 2026 client root> --out deploy/bridge2026
 ```
 
-A stale `zone-checksums.txt` shows up as the client reporting at zone enter that it "has been illegally
-manipulated".
+Rerun it whenever your server or client tables change. The formats above are complete, so any tool that reads your
+tables can produce the files instead.
 
 ## Build
 

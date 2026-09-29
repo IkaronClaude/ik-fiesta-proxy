@@ -60,11 +60,19 @@ services:
       FIESTAPROXY_PLUGIN_BRIDGE2026_LOGIN_PORT: "19010"
       FIESTAPROXY_PLUGIN_BRIDGE2026_ADVERTISE: ${ADVERTISE_IP}
       FIESTAPROXY_PLUGIN_BRIDGE2026_PORT_OFFSET: "10000"
-      FIESTAPROXY_PLUGIN_BRIDGE2026_CHECKSUMS: /config/zone-checksums.txt
+      # the data files generated from YOUR server + client (README "Data files"); no CHECKSUMS: the zones run the
+      # client_tables plugin, which registers the client's own checksums
+      FIESTAPROXY_PLUGIN_BRIDGE2026_ITEM_CLASSES: /config/item-classes.txt
+      FIESTAPROXY_PLUGIN_BRIDGE2026_QUEST_REWARD_INDEX: /config/quest-reward-index.txt
+      FIESTAPROXY_PLUGIN_BRIDGE2026_EQUIP_FOLD: /config/equip-fold.txt
+      FIESTAPROXY_PLUGIN_BRIDGE2026_QUEST_COUNTER_ROWS: /config/quest-counter-rows.txt
       FIESTAPROXY_PLUGIN_BRIDGE2026_OPCODES: /config/all-enums.json
 
       PROXY_PACKET_LOG: ${PACKET_LOG:-0}
     volumes:
       - ${XOR_TABLE:?set XOR_TABLE in .env}:/config/xor-table.hex:ro
-      - ./zone-checksums.txt:/config/zone-checksums.txt:ro
+      - ./item-classes.txt:/config/item-classes.txt:ro
+      - ./quest-reward-index.txt:/config/quest-reward-index.txt:ro
+      - ./equip-fold.txt:/config/equip-fold.txt:ro
+      - ./quest-counter-rows.txt:/config/quest-counter-rows.txt:ro
       - ${OPCODES_JSON:?set OPCODES_JSON in .env}:/config/all-enums.json:ro

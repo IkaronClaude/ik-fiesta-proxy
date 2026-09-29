@@ -9,3 +9,6 @@ __pycache__/
 *.pyc
 deploy/bridge2026/.env
 run/
+
+# Bridge2026 data - generated from YOUR OWN server + client files (see README), never committed
+deploy/bridge2026/*.txt
