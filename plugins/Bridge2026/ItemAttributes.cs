@@ -86,6 +86,8 @@ internal static class ItemAttr
 
     /// <summary>Header bytes before the attribute block: datasize, location, item id.</summary>
     public const int RecordHead = 5;
+    /// <summary>2026 item class 39 (tickets / keys) and its constant attribute width (jump table arm 39).</summary>
+    private const int Class39Ticket = 39, Class39Width = 16;
 
     /// <summary>
     /// The 2026 attribute width for a record, or -1 when this class's rule is not known.
@@ -133,6 +135,20 @@ internal static class ItemAttr
             outp[RecordHead + ins] = 0;
             Array.Copy(record, at + RecordHead + ins, outp, RecordHead + ins + 1, attrLen - ins);   // the rest
             outp[0] = (byte)(outp.Length - 1);                             // datasize stays length - 1
+            return outp;
+        }
+
+        // 2026 class 39 (entry tickets / keys: SPT_Key, 140IDTicket, the event passes) has no 2016 class: our zone loads
+        // them as class 0 (zone plugin client_tables, 2026-10-03 - creating one as 39 failed in the DB), so its record
+        // carries class 0's 1-byte attribute (the lot) where the 2026 client reads 16. Refusing it made the whole box
+        // go out untranslated - most of the inventory vanished (operator 2026-10-03, after receiving The Key of
+        // Falsification). The lot goes first and the rest is zero (no expiry, not bound); the official layout of the
+        // 16 bytes is not measured yet.
+        if (cls == Class39Ticket && attrLen == 1)
+        {
+            var outp = new byte[RecordHead + Class39Width];
+            Array.Copy(record, at, outp, 0, RecordHead + 1);
+            outp[0] = (byte)(outp.Length - 1);
             return outp;
         }
 

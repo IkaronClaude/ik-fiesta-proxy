@@ -23,6 +23,7 @@ public class ItemAttributeTests
         64612 or 64613 => Boots,       // IblisPants, IblisBoots (class 8)
         31000 => 26,                   // House_MushRoom, a constant-width class
         41511 => Amulet,               // D_ZombieRing06
+        36999 => 39,                   // SPT_Key, a 2026 class-39 ticket / key
         _ => -1,
     };
 
@@ -62,6 +63,19 @@ public class ItemAttributeTests
         => ItemAttr.Width2026(99, new byte[8]).ShouldBe(-1);
 
     // ------------------------------------------------------------------ record translation
+
+    [Fact]
+    public void Class39_key_sent_as_class0_becomes_the_16_byte_2026_record()
+    {
+        // The zone loads 2026 class 39 as class 0 (one lot byte); the 2026 client reads 16 attribute bytes. Refusing
+        // it relayed the whole box untranslated and the client lost most of the inventory (operator 2026-10-03).
+        var rec = Rec(5, 0x2403, 36999, new byte[] { 1 });
+        var outp = ItemAttr.Record2016To2026(rec, 0, rec.Length, ClassOf)!;
+        outp.Length.ShouldBe(ItemAttr.RecordHead + 16);
+        outp[0].ShouldBe((byte)20);
+        (outp[3] | (outp[4] << 8)).ShouldBe(36999);
+        outp[ItemAttr.RecordHead].ShouldBe((byte)1);   // the lot
+    }
 
     [Fact]
     public void Equipment_record_gains_one_byte_before_the_count()
