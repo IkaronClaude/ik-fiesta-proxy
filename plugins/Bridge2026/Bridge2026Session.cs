@@ -432,6 +432,10 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
+        // MOVED TO THE ZONE (ik-fiesta-patch-recipes zone/plugins/bridge26, hooksridge26.ini send=2026): these arrive
+        // already in their 2026 shape and are relayed untouched. Batch 1 (2026-10-04): 0x2448 SWING_DAMAGE, 0x2449
+        // SOMEONESWING_DAMAGE, 0x243C DOTDAMAGE, 0x2452 SKILLBASH_HIT_DAMAGE, 0x2402 TARGETINFO. Their T.* translators stay
+        // as the reference ZoneHookParityTests checks the zone against.
         _extraStates.Observe(p.Opcode, payload);   // states >= 792 per handle, for the brief-info bitset below
         switch (p.Opcode)
         {
@@ -632,10 +636,6 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(ri);                       // no item table loaded: the empty case still works
                 return;
 
-            case Op.SwingDamage when T.Swing2016To2026(payload) is { } sw:
-                ctx.Replace(sw);
-                return;
-
             // ---- combat. Every one of these is a size change the 2026 client reads state out of; a frame
             // that goes through at its 2016 width leaves the client's cast bookkeeping stuck.
             case Op.HitObjStart or Op.HitFldStart or Op.SomeoneHitObjStart or Op.SomeoneHitFldStart:
@@ -652,14 +652,6 @@ internal sealed class Bridge2026Session : IPluginSession
                                   + $"expected {size}; relayed unchanged, which bricks the next cast.");
                 return;
             }
-
-            case Op.SkillHitDamage when T.SkillHit2016To2026(payload) is { } sh:
-                ctx.Replace(sh);
-                return;
-
-            case Op.DotDamage or Op.SomeoneSwing:
-                if (T.Tail7_2016To2026(payload, 13) is { } t7) ctx.Replace(t7);
-                return;
 
             case Op.QuestDoing when payload.Length >= 6:
             {
@@ -684,10 +676,6 @@ internal sealed class Bridge2026Session : IPluginSession
                     if (_extraStates.Fill(rec, 0, T.LoginCharacterExtraBitsAt) > 0) Array.Copy(rec, 0, cl, 1 + i * len, len);
                 }
                 ctx.Replace(cl);
-                return;
-
-            case Op.TargetInfo when T.TargetInfo2016To2026(payload) is { } ti:
-                ctx.Replace(ti);
                 return;
 
             case Op.CharLoginAck when payload.Length >= 18:
