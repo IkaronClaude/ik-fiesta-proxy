@@ -33,28 +33,13 @@ internal sealed class Bridge2026Session : IPluginSession
     private int _shift;
     private bool _shiftKnown;
 
-    // Set when the bridge has just told the client to close its NPC dialog (0x442E). The 2026 close
-    // path answers with NC_ACT_ENDOFTRADE_CMD, which a 2016 client closing the same window never sends,
-    // so that one frame is swallowed. Timestamped so a close that produced no ENDOFTRADE (the window
-    // was already hidden) cannot eat a later, genuine one from a shop.
-    // BRIDGE2026_CLOSE_DIALOG=0 turns the 442E off, for a client carrying the
-    // client-2026-npc-dialog-self-close recipe (ik-fiesta-patch-recipes), which closes its own dialog the
-    // way a 2016 client does. On by default: an unmodified 2026 client needs it.
-    private static readonly bool CloseDialogForClient =
-        Environment.GetEnvironmentVariable("BRIDGE2026_CLOSE_DIALOG") != "0";
-
-    // Nullable, NOT a long.MinValue sentinel: TickCount64 - long.MinValue overflows negative, which
-    // passed the "<= window" test and swallowed EVERY ENDOFTRADE of the session (2026-09-17, caught in
-    // the first live run - shops could never tell the server they had closed).
-    private long? _closeSentAt;
-    private const int CloseEchoWindowMs = 1500;
+    // (the 0x442E dialog-close state moved to the zone with bridge26 batch 3)
 
     private byte _world;
     private readonly Dictionary<byte, uint> _avatars = new();   // slot -> chrregnum
     private readonly HashSet<byte> _usedSlots = new();
     private readonly HashSet<int> _foldedEmpty = new();         // 2026 equip slots this client already has empty
 
-    private readonly List<ushort> _trackedQuests = new();       // quest tracker: this login's set, from the DOING list(s)
 
     /// <summary>
     /// NC_ITEM_EQUIPCHANGE_CMD {u16 key, u8 2016 equip slot, item record} names the SERVER's slot, but the 2026
@@ -149,25 +134,7 @@ internal sealed class Bridge2026Session : IPluginSession
         // MOVED TO THE ZONE (bridge26 batch 2): QUEST_REWARD_SELECT index -> slot, SKILL_EMPOWALLOC 14 -> 6 B, the tracker
         // requests' 2-byte guard (0x441F / 0x4421) and the 2026 map-status request 0x182E (answered 0x182F in the zone).
 
-        if (p.Opcode == Op.QuestScriptCmdAck && CloseDialogForClient
-            && !_plugin.ZoneAnnouncesQuestEnd.ContainsKey(_info.ServiceName))
-        {
-            ctx.ToClient(Op.QuestCloseDialog, Op.QuestCloseDialogPayload);
-            _closeSentAt = Environment.TickCount64;
-            return;                                    // the ack itself is relayed untouched
-        }
-
-        // The 2026 close path (0x72B1B0) sends ENDOFTRADE when the window was showing. The 2016 click-close
-        // goes through plain CloseWin -> NpcDialogWin::OnClose (0x5F4750), which sends nothing; only
-        // CloseDialog (Esc, linkto) does. So the echo of our own 442E is not something the 2016 server
-        // ever saw mid-script, and it is dropped.
-        if (p.Opcode == Op.ActEndOfTrade && _closeSentAt is long sentAt
-            && Environment.TickCount64 - sentAt <= CloseEchoWindowMs)
-        {
-            ctx.Drop();
-            _closeSentAt = null;
-            return;
-        }
+        // MOVED TO THE ZONE (bridge26 batch 3): the per-ack 0x442E and the swallowed ENDOFTRADE echo of it.
 
         if (p.Opcode == U(Op.C26Version))
         {
@@ -352,29 +319,7 @@ internal sealed class Bridge2026Session : IPluginSession
         // QSC_DONE (the reward was given): a script may stop there with no END after it, and the 2026 dialog then
         // never closes - Continue did nothing on "Mischievous Monsters" (operator 2026-09-24). The client only
         // closes after 0x442E, so DONE is relayed and followed by one.
-        if (p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
-            && BitConverter.ToUInt32(payload, 2) == Op.QscDone && CloseDialogForClient)
-        {
-            ctx.ToClient(Op.QuestCloseDialog, Op.QuestCloseDialogPayload);
-            _closeSentAt = Environment.TickCount64;
-            _plugin.Log($"[{_info.ServiceName}] quest {BitConverter.ToUInt16(payload, 0)} script DONE -> 0x442E");
-            return;
-        }
-
-        if (p.Opcode == Op.QuestScriptCmdReq && payload.Length >= 6
-            && BitConverter.ToUInt32(payload, 2) == Op.QscEnd)
-        {
-            if (_plugin.ZoneAnnouncesQuestEnd.TryAdd(_info.ServiceName, true))
-                _plugin.Log($"[{_info.ServiceName}] zone announces quest script END: per-ack 0x442E off for this zone");
-            if (CloseDialogForClient)
-            {
-                ctx.Drop();
-                ctx.ToClient(Op.QuestCloseDialog, Op.QuestCloseDialogPayload);
-                _closeSentAt = Environment.TickCount64;
-                _plugin.Log($"[{_info.ServiceName}] quest {BitConverter.ToUInt16(payload, 0)} script END -> 0x442E (restores the HUD)");
-                return;
-            }
-        }
+        // MOVED TO THE ZONE (bridge26 batch 3): QSC_DONE -> relayed + 0x442E, QSC_END -> 0x442E.
 
         // The world manager's answer to "select server": {nError, sOTP[32]}, the same 34 bytes the 2026 client
         // expects, under the 2026 number. (2026 uses 0x0C34 for its create-character ack, so it cannot pass.)
@@ -590,20 +535,7 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(ri);                       // no item table loaded: the empty case still works
                 return;
 
-            case Op.QuestDoing when payload.Length >= 6:
-            {
-                var tracked = QuestTracker.TakeTracked(payload, _trackedQuests);
-                if (T.QuestDoing2016To2026(payload, _plugin.CounterRows) is not { } qd) return;
-                ctx.Replace(qd);
-                ctx.ToClient(Op.QuestTrackList, QuestTracker.ListPayload(tracked));
-                _plugin.Log($"[{_info.ServiceName}] quest tracker: chr {BinaryPrimitives.ReadUInt32LittleEndian(payload)}, "
-                            + $"tracked [{string.Join(",", tracked)}]");
-                return;
-            }
-
-            case Op.QuestRepeat when T.QuestRepeat2016To2026(payload, _plugin.CounterRows) is { } qr:
-                ctx.Replace(qr);
-                return;
+            // MOVED TO THE ZONE (bridge26 batch 3): the quest DOING list (+ 0x110F tracker list) and the REPEAT list.
 
             case Op.CharacterList when T.CharacterList2016To2026(payload, UsExtra) is { } cl:
                 for (int i = 0, len = T.LoginCharacter2026Length(UsExtra); 1 + (i + 1) * len <= cl.Length; i++)

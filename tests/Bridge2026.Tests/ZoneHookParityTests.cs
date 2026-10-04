@@ -28,7 +28,26 @@ public class ZoneHookParityTests
         [Op.HitFldStart] = p => T.HitStart2016To2026(p, 12),
         [Op.SomeoneHitObjStart] = p => T.HitStart2016To2026(p, 8),
         [Op.SomeoneHitFldStart] = p => T.HitStart2016To2026(p, 14),
+        // batch 3: the zone strips the TRACKED bits first (QuestTracker.TakeTracked), then converts the list
+        [Op.QuestDoing] = p => { var c = (byte[])p.Clone(); QuestTracker.TakeTracked(c, new()); return T.QuestDoing2016To2026(c, CounterRows); },
+        [Op.QuestRepeat] = p => T.QuestRepeat2016To2026(p, CounterRows),
     };
+
+    /// <summary>quest-counter-rows.txt (tools/bridge_data.py) - the same file the zone loads: BRIDGE26_COUNTER_ROWS</summary>
+    private static readonly Dictionary<int, int[]> CounterRowsMap = LoadCounterRows();
+    private static int[]? CounterRows(int quest) => CounterRowsMap.TryGetValue(quest, out var r) ? r : null;
+    private static Dictionary<int, int[]> LoadCounterRows()
+    {
+        var map = new Dictionary<int, int[]>();
+        var path = Environment.GetEnvironmentVariable("BRIDGE26_COUNTER_ROWS");
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return map;
+        foreach (var line in File.ReadAllLines(path))
+        {
+            var f = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (f.Length is 6 or 8 && f.All(x => int.TryParse(x, out _))) map[int.Parse(f[0])] = f.Skip(1).Select(int.Parse).ToArray();
+        }
+        return map;
+    }
 
     [Fact]
     public void Zone_plugin_translations_match_the_proxy()

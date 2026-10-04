@@ -61,33 +61,6 @@ public class QuestTrackerTests
     }
 
     [Fact]
-    public void Login_list_becomes_the_tracked_set_and_loses_the_bit()
-    {
-        var s = ZoneSession();
-        var doing = Doing(true, (100, 6, true), (200, 6, false), (300, 8, true));
-
-        var ctx = FromServer(s, Op.QuestDoing, doing);
-
-        var list = ctx.ExtraToClient.Single();
-        list.Opcode.ShouldBe(Op.QuestTrackList);
-        Slots(list.Payload).ShouldBe(new ushort[] { 100, 300, 0xFFFF, 0xFFFF, 0xFFFF });
-        var relayed = ctx.Forwarded!.Payload.ToArray();
-        relayed.Length.ShouldBe(6 + 37 * 3);
-        relayed.ShouldNotContain((byte)0x81);                          // End_Location kept, tracked bit gone
-    }
-
-    [Fact]
-    public void A_second_list_packet_adds_to_the_first()
-    {
-        var s = ZoneSession();
-        FromServer(s, Op.QuestDoing, Doing(true, (100, 6, true)));
-
-        var ctx = FromServer(s, Op.QuestDoing, Doing(false, (400, 6, true)));
-
-        Slots(ctx.ExtraToClient.Single().Payload).ShouldBe(new ushort[] { 100, 400, 0xFFFF, 0xFFFF, 0xFFFF });
-    }
-
-    [Fact]
     public void Take_tracked_keeps_five_and_clears_the_bit()
     {
         var p = Doing(true, (1, 6, true), (2, 6, true), (3, 6, true), (4, 6, true), (5, 6, true), (6, 6, true));

@@ -28,6 +28,35 @@ public class QuestDialogCloseTests
         return ctx;
     }
 
+    /// <summary>
+    /// The quest dialog close (0x442E after a page ack / DONE / END), the swallowed ENDOFTRADE echo and the DOING / REPEAT
+    /// lists with the tracker list moved into the zone (ik-fiesta-patch-recipes zone/plugins/bridge26 batch 3, which logs
+    /// each step); the proxy relays all of it untouched. QuestTracker.TakeTracked / ListPayload stay as the reference.
+    /// </summary>
+    [Fact]
+    public void The_quest_dialog_and_quest_lists_are_relayed_for_the_zone()
+    {
+        var s = ZoneSession();
+        var ack = FromClient(s, Op.QuestScriptCmdAck, 0x9F, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00);
+        ack.Forwarded.ShouldBeSameAs(ack.Packet);
+        ack.ExtraToClient.ShouldBeEmpty();
+        FromClient(s, Op.ActEndOfTrade).Forwarded.ShouldNotBeNull();
+
+        foreach (var (op, payload) in new (ushort, byte[])[]
+                 {
+                     (Op.QuestScriptCmdReq, new byte[] { 0x9F, 0x4E, 10, 0, 0, 0 }),         // DONE
+                     (Op.QuestScriptCmdReq, new byte[] { 0x9F, 0x4E, 1, 0, 0, 0 }),          // END
+                     (Op.QuestDoing, new byte[] { 1, 0, 0, 0, 1, 0 }),                         // an empty DOING list
+                     (Op.QuestRepeat, new byte[] { 1, 0, 0, 0, 0, 0 }),
+                 })
+        {
+            var ctx = new PluginPacketContext(new FiestaPacket(op, payload), fromClient: false);
+            s.OnServerPacket(ctx);
+            ctx.Forwarded.ShouldBeSameAs(ctx.Packet, $"0x{op:X4}");
+            ctx.ExtraToClient.ShouldBeEmpty($"0x{op:X4}");
+        }
+    }
+
     [Fact]
     public void EndOfTrade_with_no_close_outstanding_is_relayed()
     {
@@ -36,28 +65,6 @@ public class QuestDialogCloseTests
         var ctx = FromClient(s, Op.ActEndOfTrade);
 
         ctx.Forwarded.ShouldNotBeNull();
-    }
-
-    [Fact]
-    public void A_page_ack_is_relayed_and_the_client_is_told_to_close_its_dialog()
-    {
-        var s = ZoneSession();
-
-        var ctx = FromClient(s, Op.QuestScriptCmdAck, 0x9F, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00);
-
-        ctx.Forwarded.ShouldNotBeNull();
-        ctx.ExtraToClient.Count.ShouldBe(1);
-        ctx.ExtraToClient[0].Opcode.ShouldBe(Op.QuestCloseDialog);
-    }
-
-    [Fact]
-    public void Only_the_EndOfTrade_echoing_our_close_is_swallowed()
-    {
-        var s = ZoneSession();
-        FromClient(s, Op.QuestScriptCmdAck, 0x9F, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00);
-
-        FromClient(s, Op.ActEndOfTrade).Forwarded.ShouldBeNull();        // the echo
-        FromClient(s, Op.ActEndOfTrade).Forwarded.ShouldNotBeNull();     // a genuine one straight after
     }
 
     [Fact]
@@ -85,51 +92,6 @@ public class QuestDialogCloseTests
         BitConverter.TryWriteBytes(b.AsSpan(0), quest);
         BitConverter.TryWriteBytes(b.AsSpan(2), command);
         return b;
-    }
-
-    [Fact]
-    public void A_zone_that_announces_script_END_stops_getting_a_close_per_ack()
-    {
-        var plugin = new Bridge2026Plugin();
-        var s = ZoneSession(plugin);
-
-        // END itself is replaced by 0x442E (d0637e2): the 2026 client restores its HUD only on 442E
-        var end = FromServer(s, Op.QuestScriptCmdReq, ScriptCmd(20135, Op.QscEnd));
-        end.Forwarded.ShouldBeNull();
-        end.ExtraToClient.Count.ShouldBe(1);
-        end.ExtraToClient[0].Opcode.ShouldBe(Op.QuestCloseDialog);
-
-        var ack = FromClient(s, Op.QuestScriptCmdAck, 0xA7, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00);
-        ack.Forwarded.ShouldNotBeNull();
-        ack.ExtraToClient.ShouldBeEmpty();                                 // no 442E: no flicker between pages
-
-        // learned per zone, and shared by every later session to that zone
-        FromClient(ZoneSession(plugin), Op.QuestScriptCmdAck, 0xA7, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00)
-            .ExtraToClient.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void A_script_that_stops_at_DONE_still_closes_the_2026_dialog()
-    {
-        // "Mischievous Monsters" (quest 10, 2026-09-24): reward given (QSC_DONE), no END after it; the 2026
-        // window only closes after 0x442E, so Continue did nothing.
-        var s = ZoneSession();
-        var done = FromServer(s, Op.QuestScriptCmdReq, ScriptCmd(10, Op.QscDone));
-        done.Forwarded.ShouldNotBeNull();                                  // DONE itself is relayed
-        done.ExtraToClient.Count.ShouldBe(1);
-        done.ExtraToClient[0].Opcode.ShouldBe(Op.QuestCloseDialog);
-    }
-
-    [Fact]
-    public void A_dialogue_page_is_not_mistaken_for_an_END()
-    {
-        var plugin = new Bridge2026Plugin();
-        var s = ZoneSession(plugin);
-
-        FromServer(s, Op.QuestScriptCmdReq, ScriptCmd(20135, 2));           // QSC_SAY
-
-        FromClient(s, Op.QuestScriptCmdAck, 0xA7, 0x4E, 0x02, 0x01, 0x00, 0x00, 0x00)
-            .ExtraToClient.Count.ShouldBe(1);                              // still closing per ack
     }
 
     [Fact]
