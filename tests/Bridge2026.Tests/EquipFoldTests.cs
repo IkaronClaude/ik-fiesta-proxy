@@ -107,8 +107,9 @@ public class EquipFoldTests : IDisposable
 public class MapInfoTests
 {
     [Fact]
-    public void The_map_status_request_is_dropped_and_answered_zero()
+    public void The_map_status_request_is_relayed_for_the_zone_to_answer()
     {
+        // moved to the zone (bridge26 batch 2: 0x182E -> 0x182F {0}); the opcode filter must let it through
         var plugin = new Bridge2026Plugin();
         var s = new Bridge2026Session(plugin,
             new PluginSessionInfo("Zone_0_4", 19028, "127.0.0.1", 9028, "10.0.0.2:50000", "10.0.0.1:19028"));
@@ -116,9 +117,7 @@ public class MapInfoTests
 
         s.OnClientPacket(ctx);
 
-        ctx.Forwarded.ShouldBeNull();
-        var ack = ctx.ExtraToClient.Single();
-        ack.Opcode.ShouldBe(Op.C26MapInfoAck);
-        ack.Payload.ToArray().ShouldBe(new byte[] { 0 });
+        ctx.Forwarded.ShouldBeSameAs(ctx.Packet);
+        ctx.ExtraToClient.ShouldBeEmpty();
     }
 }

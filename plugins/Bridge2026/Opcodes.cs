@@ -147,7 +147,7 @@ internal static class Op
     public const ushort QuestUntrackAck = 0x4422;   // S->C {u16 0x30B8, u16 quest}: removed (official also sends it unasked at reward)
     /// <summary>Client opcodes the 2016 build does not define but a ZONE PLUGIN handles (it stores its own handler), so
     /// the unknown-opcode filter must let them through: quest_track's untrack (QUEST cmd 33; 2016 stops at 32).</summary>
-    public static readonly HashSet<ushort> HandledByZonePlugins = new() { QuestUntrackReq };
+    public static readonly HashSet<ushort> HandledByZonePlugins = new() { QuestUntrackReq, C26MapInfoReq };   // 0x182E: answered by the zone plugin bridge26
     public const int QuestJobDungeonFindRng2016Size = 115;
 
     public const ushort SwingDamage = 0x2448;

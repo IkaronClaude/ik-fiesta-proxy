@@ -146,24 +146,8 @@ internal sealed class Bridge2026Session : IPluginSession
         // window is simply closed. No script knowledge, no last-page detection, no timer.
         // ...unless this zone has shown it announces the end of a script itself (see OnServerPacket): then
         // the window must stay open between pages, and its own QSC_END closes it after the last one.
-        // NC_QUEST_REWARD_SELECT_ITEM_INDEX_CMD {quest u16, index u32}: the 2026 client counts its own QuestReward rows
-        // (items first), the 2016 zone reads a QUEST_DATA.Reward slot (EXP and money first) - relayed as it was, a
-        // mage choosing Magic Boots got the cleric's Litany Boots (operator 2026-09-24).
-        if (p.Opcode == Op.QuestRewardSelect && payload.Length == 6)
-        {
-            var quest = BitConverter.ToUInt16(payload, 0);
-            var index = (int)BitConverter.ToUInt32(payload, 2);
-            var slot = _plugin.RewardSlot(quest, index);
-            if (slot >= 0 && slot != index)
-            {
-                var moved = (byte[])payload.Clone();
-                BitConverter.TryWriteBytes(moved.AsSpan(2), (uint)slot);
-                ctx.Replace(moved);
-            }
-            _plugin.Log($"[{_info.ServiceName}] quest {quest} reward choice: client index {index} -> slot {slot}"
-                        + (slot < 0 ? " (NOT in the map, relayed as is)" : ""));
-            return;
-        }
+        // MOVED TO THE ZONE (bridge26 batch 2): QUEST_REWARD_SELECT index -> slot, SKILL_EMPOWALLOC 14 -> 6 B, the tracker
+        // requests' 2-byte guard (0x441F / 0x4421) and the 2026 map-status request 0x182E (answered 0x182F in the zone).
 
         if (p.Opcode == Op.QuestScriptCmdAck && CloseDialogForClient
             && !_plugin.ZoneAnnouncesQuestEnd.ContainsKey(_info.ServiceName))
@@ -182,29 +166,6 @@ internal sealed class Bridge2026Session : IPluginSession
         {
             ctx.Drop();
             _closeSentAt = null;
-            return;
-        }
-
-        // 0x441F {u16 quest} track / 0x4421 {u16 quest} untrack = the 2026 QUEST TRACKER (see QuestTracker). The zone
-        // plugin quest_track answers both (0x4420 / 0x4422) and keeps the set on the character's quest records, so they
-        // go through unchanged. 2016 numbers them as zone-to-zone packets (FIND_RNG is 115 bytes there): anything but
-        // the 2-byte client form is dropped. (Not a click or an ack: an earlier revision turned 0x441F into
-        // NC_QUEST_SCRIPT_CMD_ACK and skipped the page after an ACCEPT.)
-        if ((p.Opcode == Op.QuestTrackReq || p.Opcode == Op.QuestUntrackReq) && payload.Length != 2)
-        {
-            ctx.Drop();
-            _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4} {payload.Length} B dropped: not the 2-byte tracker request");
-            return;
-        }
-
-        // Skill empower: the 2026 request is 14 B, the 2016 zone reads 6 - relayed as-is it stored an empty allocation.
-        if (p.Opcode == Op.SkillEmpowAllocReq && T.SkillEmpowAlloc2026To2016(payload) is { } emp)
-        {
-            ctx.Replace(emp);
-            var extra = T.SkillEmpowOtherNibbles(payload, 2) | T.SkillEmpowOtherNibbles(payload, 8);
-            _plugin.Log($"[{_info.ServiceName}] skill {BitConverter.ToUInt16(payload, 0)} empower {Convert.ToHexString(payload, 2, 12)}"
-                        + $" -> plus 0x{BitConverter.ToUInt16(emp, 2):X4} minus 0x{BitConverter.ToUInt16(emp, 4):X4}"
-                        + (extra != 0 ? $" (2026-only nibbles 0x{extra:X12} DROPPED)" : ""));
             return;
         }
 
@@ -364,14 +325,6 @@ internal sealed class Bridge2026Session : IPluginSession
             return;
         }
 
-        // 2026's map-status request after every map login: no 2016 opcode, official answers 00 (see Op.C26MapInfoReq)
-        if (p.Opcode == Op.C26MapInfoReq)
-        {
-            ctx.Drop();
-            ctx.ToClient(Op.C26MapInfoAck, new byte[] { 0 });
-            return;
-        }
-
         // Anything the 2016 build has no opcode for would make the server hang up.
         if (!_plugin.IsKnownTo2016(p.Opcode) && !Op.HandledByZonePlugins.Contains(p.Opcode))
         {
@@ -434,7 +387,8 @@ internal sealed class Bridge2026Session : IPluginSession
 
         // MOVED TO THE ZONE (ik-fiesta-patch-recipes zone/plugins/bridge26, hooksridge26.ini send=2026): these arrive
         // already in their 2026 shape and are relayed untouched. Batch 1 (2026-10-04): 0x2448 SWING_DAMAGE, 0x2449
-        // SOMEONESWING_DAMAGE, 0x243C DOTDAMAGE, 0x2452 SKILLBASH_HIT_DAMAGE, 0x2402 TARGETINFO. Their T.* translators stay
+        // SOMEONESWING_DAMAGE, 0x243C DOTDAMAGE, 0x2452 SKILLBASH_HIT_DAMAGE, 0x2402 TARGETINFO; batch 2: the four
+        // SKILLBASH *_START frames 0x244E / 0x2450 / 0x244F / 0x2451. Their T.* translators stay
         // as the reference ZoneHookParityTests checks the zone against.
         _extraStates.Observe(p.Opcode, payload);   // states >= 792 per handle, for the brief-info bitset below
         switch (p.Opcode)
@@ -635,23 +589,6 @@ internal sealed class Bridge2026Session : IPluginSession
             case Op.RewardInvenAck when IsUsBuild && T.RewardInven2016To2026(payload) is { } ri:
                 ctx.Replace(ri);                       // no item table loaded: the empty case still works
                 return;
-
-            // ---- combat. Every one of these is a size change the 2026 client reads state out of; a frame
-            // that goes through at its 2016 width leaves the client's cast bookkeeping stuck.
-            case Op.HitObjStart or Op.HitFldStart or Op.SomeoneHitObjStart or Op.SomeoneHitFldStart:
-            {
-                var size = p.Opcode switch
-                {
-                    Op.HitObjStart => 6,
-                    Op.HitFldStart => 12,
-                    Op.SomeoneHitObjStart => 8,
-                    _ => 14,
-                };
-                if (T.HitStart2016To2026(payload, size) is { } h) ctx.Replace(h);
-                else _plugin.Warn($"[{_info.ServiceName}] cast-start 0x{p.Opcode:X4} is {payload.Length} B, "
-                                  + $"expected {size}; relayed unchanged, which bricks the next cast.");
-                return;
-            }
 
             case Op.QuestDoing when payload.Length >= 6:
             {

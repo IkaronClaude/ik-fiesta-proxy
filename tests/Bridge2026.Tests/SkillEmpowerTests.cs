@@ -45,14 +45,16 @@ public class SkillEmpowerTests
     }
 
     [Fact]
-    public void The_session_rewrites_the_request_for_the_zone()
+    public void The_session_relays_the_request_the_zone_translates_it()
     {
+        // moved to the zone (ik-fiesta-patch-recipes zone/plugins/bridge26 batch 2): the proxy relays the 14-byte 2026 form
         var s = new Bridge2026Session(new Bridge2026Plugin(),
             new PluginSessionInfo("Zone_0_4", 19028, "127.0.0.1", 9028, "10.0.0.2:50000", "10.0.0.1:19028"));
         var ctx = new PluginPacketContext(new FiestaPacket(Op.SkillEmpowAllocReq, Req2026(0x17FC, [0, 0, 0, 0, 0, 5], new byte[6])), fromClient: true);
 
         s.OnClientPacket(ctx);
 
-        ctx.Forwarded!.Payload.ToArray().ShouldBe(new byte[] { 0xFC, 0x17, 0x00, 0x50, 0, 0 });   // cooltime 5
+        ctx.Forwarded.ShouldBeSameAs(ctx.Packet);                              // untouched
+        T.SkillEmpowAlloc2026To2016(ctx.Packet.Payload.ToArray())!.ShouldBe(new byte[] { 0xFC, 0x17, 0x00, 0x50, 0, 0 });   // the reference: cooltime 5
     }
 }

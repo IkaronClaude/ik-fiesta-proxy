@@ -24,6 +24,10 @@ public class ZoneHookParityTests
         [Op.DotDamage] = p => T.Tail7_2016To2026(p, 13),
         [Op.SkillHitDamage] = T.SkillHit2016To2026,
         [Op.TargetInfo] = T.TargetInfo2016To2026,
+        [Op.HitObjStart] = p => T.HitStart2016To2026(p, 6),
+        [Op.HitFldStart] = p => T.HitStart2016To2026(p, 12),
+        [Op.SomeoneHitObjStart] = p => T.HitStart2016To2026(p, 8),
+        [Op.SomeoneHitFldStart] = p => T.HitStart2016To2026(p, 14),
     };
 
     [Fact]
