@@ -17,9 +17,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\plugins\Bridge2026\Bridge2026.csproj" />
-    <!-- The plugin references these with Private=false (the host supplies them at run time), so a test
-         that builds a PluginPacketContext has to reference them itself. -->
+    <!-- Reference/ holds the retired Bridge2026 plugin's translators: the byte-for-byte reference the server hooks
+         (ik-fiesta-patch-recipes login_bridge26 / wm_bridge26 / bridge26) are checked against. -->
     <ProjectReference Include="..\..\src\FiestaProxy\FiestaProxy.csproj" />
     <ProjectReference Include="..\..\lib\FiestaLib-Reloaded\src\FiestaLibReloaded.Networking\FiestaLibReloaded.Networking.csproj" />
   </ItemGroup>

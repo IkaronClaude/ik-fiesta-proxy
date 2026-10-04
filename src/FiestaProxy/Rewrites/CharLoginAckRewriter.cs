@@ -22,6 +22,7 @@ namespace FiestaProxy.Rewrites;
 public sealed class CharLoginAckRewriter : IPacketRewriter
 {
     public ushort Opcode => 0x1003;
+    public int PayloadSize => Sizeof;
 
     private const int IpOffset = 0;
     private const int IpLen = 16;
@@ -53,7 +54,7 @@ public sealed class CharLoginAckRewriter : IPacketRewriter
         return new FiestaPacket(packet.Opcode, payload);
     }
 
-    private static ProxyRoute? FindZoneRoute(string emittedIp, ushort emittedPort, ProxyConfig config)
+    internal static ProxyRoute? FindZoneRoute(string emittedIp, ushort emittedPort, ProxyConfig config)
     {
         // Port match is sufficient for distinct zones — each zone has a unique
         // upstream port. We don't reverse-resolve the host because the WM
@@ -65,7 +66,7 @@ public sealed class CharLoginAckRewriter : IPacketRewriter
             r.UpstreamPort == emittedPort);
     }
 
-    private static string ReadName4Ip(ReadOnlySpan<byte> ipField)
+    internal static string ReadName4Ip(ReadOnlySpan<byte> ipField)
     {
         var nul = ipField.IndexOf((byte)0);
         var len = nul < 0 ? ipField.Length : nul;

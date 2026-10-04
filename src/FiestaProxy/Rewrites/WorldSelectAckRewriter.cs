@@ -4,7 +4,8 @@ using FiestaProxy.Config;
 namespace FiestaProxy.Rewrites;
 
 /// <summary>
-/// PROTO_NC_USER_WORLDSELECT_ACK (0x0C0C). Single-world ack. Payload (from PDB):
+/// PROTO_NC_USER_WORLDSELECT_ACK: 2016 0x0C0C, 83 B. The 2026 client's is 0x0C0B, 84 B (Login hook login_bridge26 sends
+/// it: the same fields plus the chosen world number at the end), so one rewriter, registered for both keys. Payload (PDB):
 ///   offset 0  : byte  worldstatus
 ///   offset 1  : 16    Name4 ip       (dotted-quad ASCII, zero-padded)
 ///   offset 17 : ushort port          (LE)
@@ -15,9 +16,10 @@ namespace FiestaProxy.Rewrites;
 /// server identifies itself via the listen port the proxy received the
 /// connection on, which is mapped back to a ServiceName.
 /// </summary>
-public sealed class WorldSelectAckRewriter : IPacketRewriter
+public sealed class WorldSelectAckRewriter(ushort opcode, int payloadSize) : IPacketRewriter
 {
-    public ushort Opcode => 0x0C0C;
+    public ushort Opcode => opcode;
+    public int PayloadSize => payloadSize;
 
     private const int IpOffset = 1;
     private const int IpLen = 16;

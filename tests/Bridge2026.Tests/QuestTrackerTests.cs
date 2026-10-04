@@ -14,24 +14,6 @@ namespace Bridge2026.Tests;
 /// </summary>
 public class QuestTrackerTests
 {
-    private static Bridge2026Session ZoneSession()
-        => new(new Bridge2026Plugin(),
-               new PluginSessionInfo("Zone_0_4", 19028, "127.0.0.1", 9028, "10.0.0.2:50000", "10.0.0.1:19028"));
-
-    private static PluginPacketContext FromClient(Bridge2026Session s, ushort opcode, params byte[] payload)
-    {
-        var ctx = new PluginPacketContext(new FiestaPacket(opcode, payload), fromClient: true);
-        s.OnClientPacket(ctx);
-        return ctx;
-    }
-
-    private static PluginPacketContext FromServer(Bridge2026Session s, ushort opcode, byte[] payload)
-    {
-        var ctx = new PluginPacketContext(new FiestaPacket(opcode, payload), fromClient: false);
-        s.OnServerPacket(ctx);
-        return ctx;
-    }
-
     /// <summary>A 2016 quest DOING list: {chrregnum u32, needClear u8, count u8} + 32-byte records.</summary>
     private static byte[] Doing(bool clear, params (ushort quest, byte status, bool tracked)[] quests)
     {
@@ -51,14 +33,6 @@ public class QuestTrackerTests
     private static ushort[] Slots(ReadOnlyMemory<byte> p)
         => Enumerable.Range(0, 5).Select(i => BitConverter.ToUInt16(p.Span.Slice(2 * i, 2))).ToArray();
 
-    [Fact]
-    public void Track_and_untrack_requests_go_to_the_zone()
-    {
-        var s = ZoneSession();
-
-        FromClient(s, Op.QuestTrackReq, 200, 0).Forwarded.ShouldNotBeNull();
-        FromClient(s, Op.QuestUntrackReq, 200, 0).Forwarded.ShouldNotBeNull();
-    }
 
     [Fact]
     public void Take_tracked_keeps_five_and_clears_the_bit()
