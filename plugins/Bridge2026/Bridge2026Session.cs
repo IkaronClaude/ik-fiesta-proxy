@@ -60,6 +60,10 @@ internal sealed class Bridge2026Session : IPluginSession
     /// opcodes, and opcodes the 2016 zone has no handler for (dropped there, not here).</summary>
     private bool IsZoneLink => _info.ServiceName.StartsWith("Zone_", StringComparison.Ordinal);
 
+    /// <summary>The world-manager link: the WM hook (wm_bridge26) translates it - per session, from the 2026 WM login
+    /// opcode. The bridge only rewrites the zone address in CHAR_LOGIN_ACK, because it is the client's way in.</summary>
+    private bool IsWmLink => _info.ServiceName.StartsWith("WorldManager", StringComparison.Ordinal);
+
     /// <summary>True for the US 10.6.4 build, whose structs are wider than the German build's.</summary>
     private bool IsUsBuild => _shift != 0;
 
@@ -81,6 +85,8 @@ internal sealed class Bridge2026Session : IPluginSession
             _plugin.LastShift = _shift;        // the WM and zone connections read this
             _plugin.Log($"[{_info.ServiceName}] version opcode 0x{p.Opcode:X4}, {(_shift == 0 ? "German" : "US")} numbering ({_shift:+0;-0;0})");
         }
+
+        if (IsWmLink) return;                             // MOVED TO THE WM HOOK (wm_bridge26): every WM-link request
 
         // QUEST DIALOGUE. Everything here is read out of the two client binaries, not inferred from
         // captures - three capture-only readings of this exchange were wrong in a row.
@@ -269,6 +275,8 @@ internal sealed class Bridge2026Session : IPluginSession
     {
         var p = ctx.Packet;
         var payload = p.Payload.ToArray();
+        // MOVED TO THE WM HOOK (wm_bridge26): avatar list, create success, guild member list, academy info, will-select ack.
+        if (IsWmLink && p.Opcode != Op.CharLoginAck) return;
 
         // A 0x4401 whose STRUCT_QSC.Command is QSC_END (1): this zone tells its clients when a script ends.
         // Remembered, so the per-ack close stops for this zone - and NOT relayed: it becomes a 0x442E.
