@@ -60,8 +60,8 @@ public class ConfFileTests : IDisposable
             ADVERTISE_IP 192.168.1.10
             """));
         Get(v, "PROXY_ROUTES").ShouldBe(
-            "19010:Login:127.0.0.1:9010:bridge;19013:WorldManager_0:127.0.0.1:9013:bridge;" +
-            "19016:Zone_0_0:127.0.0.1:9016:bridge;19025:Zone_0_3:127.0.0.1:9025:bridge");
+            "19010:Login:127.0.0.1:9010:rewrite;19013:WorldManager_0:127.0.0.1:9013:rewrite;" +
+            "19016:Zone_0_0:127.0.0.1:9016:rewrite;19025:Zone_0_3:127.0.0.1:9025:rewrite");
         Get(v, "PUBLIC_IP").ShouldBe("192.168.1.10");
     }
 

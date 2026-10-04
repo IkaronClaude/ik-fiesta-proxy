@@ -1,9 +1,9 @@
-# The 2026-client bridge in front of a local 2016 stack, laid out the way the k3s deployment is.
+# The proxy in front of a local 2016 stack, for 2016 AND 2026 clients, laid out the way the k3s deployment is.
 #
-# In the cluster the proxy sits beside the game services and does two jobs: it rewrites the endpoints the
-# servers advertise so a client always dials one public address, and it fronts each service on its own
-# listen port. This compose does the same against the local docker stack, with one addition: the bridge2026
-# plugin, so an unmodified 2026 client can speak to the 2016 exes.
+# It rewrites the endpoints the servers advertise so a client always dials one public address, and fronts each
+# service on its own listen port. No plugin since 2026-10-04: the 2026 client is served by the servers' own hooks
+# (ik-fiesta-patch-recipes login_bridge26 / wm_bridge26 / bridge26); the proxy's native rewrites (keyed on opcode AND
+# payload size) cover both clients' address frames.
 #
 #   client ---> :19010 bridge ---> <stack>:9010  Login
 #          ---> :19013 bridge ---> <stack>:9013  WorldManager
@@ -31,7 +31,7 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: fiesta-proxy:bridge2026
+    image: fiesta-proxy:local
     container_name: fiesta-bridge2026
     restart: unless-stopped
     ports:
@@ -48,31 +48,8 @@ services:
       # Where the host-mode game stack is, seen from a bridge network.
       - "stack:host-gateway"
     environment:
-      # Which services the bridge fronts. "bridge" is the mode that decodes BOTH directions; the plugin
-      # cannot translate what the client sends on a rewrite or opaque route.
-      PROXY_ROUTES: "19010:Login:stack:9010:bridge;19013:WorldManager_0:stack:9013:bridge;19019:Zone_0_0:stack:9019:bridge"
+      # `rewrite` = the native server->client address rewrites (WORLDSELECT_ACK, CHAR_LOGIN_ACK, MAP_LINKOTHER).
+      # Every zone needs a route: a map change onto another zone dials that zone's (rewritten) port.
+      PROXY_ROUTES: "19010:Login:stack:9010:rewrite;19013:WorldManager_0:stack:9013:rewrite;19019:Zone_0_0:stack:9019:rewrite"
       PUBLIC_IP: ${ADVERTISE_IP}
-
-      # The client direction is encrypted, so the bridge cannot read it without the table. BYO: the repo
-      # ships none. Mounted read-only below.
-      XOR_TABLE_PATH: /config/xor-table.hex
-
-      FIESTAPROXY_PLUGIN_BRIDGE2026_LOGIN_PORT: "19010"
-      FIESTAPROXY_PLUGIN_BRIDGE2026_ADVERTISE: ${ADVERTISE_IP}
-      FIESTAPROXY_PLUGIN_BRIDGE2026_PORT_OFFSET: "10000"
-      # the data files generated from YOUR server + client (README "Data files"); no CHECKSUMS: the zones run the
-      # client_tables plugin, which registers the client's own checksums
-      FIESTAPROXY_PLUGIN_BRIDGE2026_ITEM_CLASSES: /config/item-classes.txt
-      FIESTAPROXY_PLUGIN_BRIDGE2026_QUEST_REWARD_INDEX: /config/quest-reward-index.txt
-      FIESTAPROXY_PLUGIN_BRIDGE2026_EQUIP_FOLD: /config/equip-fold.txt
-      FIESTAPROXY_PLUGIN_BRIDGE2026_QUEST_COUNTER_ROWS: /config/quest-counter-rows.txt
-      FIESTAPROXY_PLUGIN_BRIDGE2026_OPCODES: /config/all-enums.json
-
       PROXY_PACKET_LOG: ${PACKET_LOG:-0}
-    volumes:
-      - ${XOR_TABLE:?set XOR_TABLE in .env}:/config/xor-table.hex:ro
-      - ./item-classes.txt:/config/item-classes.txt:ro
-      - ./quest-reward-index.txt:/config/quest-reward-index.txt:ro
-      - ./equip-fold.txt:/config/equip-fold.txt:ro
-      - ./quest-counter-rows.txt:/config/quest-counter-rows.txt:ro
-      - ${OPCODES_JSON:?set OPCODES_JSON in .env}:/config/all-enums.json:ro

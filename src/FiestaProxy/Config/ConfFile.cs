@@ -15,7 +15,8 @@ namespace FiestaProxy.Config;
 ///   #include "..\ServerSource\9Data\ServerInfo\ServerInfo.txt"   the server this proxy fronts
 ///   ADVERTISE_IP   192.168.1.10     the address players reach this machine on (-> PUBLIC_IP)
 ///   PORT_OFFSET    10000            player-facing port = the server's port + this (default 10000)
-///   MODE           bridge           bridge | rewrite | opaque (default bridge)
+///   MODE           rewrite          rewrite | bridge | opaque (default rewrite: the native address rewrites, for
+///                                   2016 and 2026 clients alike; bridge also decodes the client side for plugins)
 ///   LISTEN         Zone_0_3 29025   one service's player-facing port, overriding the offset
 ///   UPSTREAM_HOST  10.0.0.5         dial the server here instead of the IP ServerInfo lists
 ///   SET            NAME value       any environment variable; ${VAR} expands (see below)
@@ -67,7 +68,7 @@ public static class ConfFile
         var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["PORT_OFFSET"] = "10000",
-            ["MODE"] = "bridge",
+            ["MODE"] = "rewrite",
             ["CONF_DIR"] = dir,
         };
         var listen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);

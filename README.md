@@ -36,11 +36,15 @@ internal-only addressing.
 
 ## Client-facing rewriters
 
-Two server→client announcement packets carry an endpoint the client then dials.
-The proxy parses those frames and patches the endpoint to the public address:
+Three server→client announcement packets carry an endpoint the client then dials.
+The proxy parses those frames and patches the endpoint to the public address. Rewriters are keyed on **opcode AND
+exact payload size**: opcodes are reused between the 2016 and 2026 client protocols, so a frame of another shape is
+never touched. Both client generations are covered natively:
 
-- `PROTO_NC_USER_WORLDSELECT_ACK` (0x0C0C) — Login → client: the WM endpoint.
-- `PROTO_NC_CHAR_LOGIN_ACK` (0x1003) — WM → client: the Zone endpoint.
+- `PROTO_NC_USER_WORLDSELECT_ACK` — Login → client: the WM endpoint. 2016: 0x0C0C, 83 B; 2026: 0x0C0B, 84 B (the
+  same fields at the same offsets, plus the world number).
+- `PROTO_NC_CHAR_LOGIN_ACK` (0x1003, 18 B) — WM → client: the Zone endpoint.
+- `NC_MAP_LINKOTHER_CMD` (0x180A, 30 B) — Zone → client: the next zone's endpoint on a map change.
 
 Both are validated end-to-end with `tools/session_client.py` driving a real
 Login → WM → Zone chain.
@@ -133,12 +137,12 @@ row (kind 20, the stock file's `PUBLIC_IP` lines) becomes a route — type 4 `Lo
 #include "..\ServerSource\9Data\ServerInfo\ServerInfo.txt"   ; the server this proxy fronts
 ADVERTISE_IP   192.168.1.10      ; what players dial (-> PUBLIC_IP)
 PORT_OFFSET    10000             ; player port = server port + this (default 10000)
-MODE           bridge            ; bridge | rewrite | opaque (default bridge)
+MODE           rewrite           ; rewrite | bridge | opaque (default rewrite)
 ; LISTEN       Zone_0_3 29025    ; one service's player port, overriding the offset
 ; UPSTREAM_HOST 10.0.0.5         ; dial the server here instead of ServerInfo's IP
 PATH XOR_TABLE_PATH xor-table.hex                            ; PATH = resolved against the conf folder
-SET  FIESTAPROXY_PLUGIN_BRIDGE2026_LOGIN_PORT ${LISTEN_Login} ; SET = any variable; ${...} expands the
-SET  FIESTAPROXY_PLUGIN_BRIDGE2026_ADVERTISE  ${ADVERTISE_IP} ;   directives, LISTEN_<service>, CONF_DIR
+SET  PROXY_PACKET_LOG 1                                       ; SET = any variable; ${...} expands the
+                                                             ;   directives, LISTEN_<service>, CONF_DIR
 ```
 
 ```
@@ -161,103 +165,43 @@ is a **plugin**: a .NET assembly the proxy loads at startup.
 for public `IProxyPlugin` implementations with a parameterless constructor
 (`src/FiestaProxy/Plugins/IProxyPlugin.cs`). Each assembly gets its own load context. A plugin that fails to load
 or initialise is logged and skipped - a bad plugin never stops the proxy from proxying. The startup log names
-what loaded: `plugins: loaded bridge2026 from Bridge2026.dll`.
+what loaded (`plugins: loaded <name> from <file>.dll`).
 
 **Settings.** A plugin reads its own environment variables, `FIESTAPROXY_PLUGIN_<NAME>_<KEY>`, with the name
-upper-cased and non-alphanumerics turned into `_`. The plugin named `bridge2026` reads
-`FIESTAPROXY_PLUGIN_BRIDGE2026_ADVERTISE`, and so on.
+upper-cased and non-alphanumerics turned into `_` (a plugin named `example` reads `FIESTAPROXY_PLUGIN_EXAMPLE_<KEY>`).
 
 **Which traffic it sees.** Plugins are offered every connection, but only a **`bridge`** route decodes the
 client's (XOR-encrypted) direction too, so a plugin that needs to read or answer what the client sends must sit
 on `bridge` routes - which also need the XOR table (`XOR_TABLE_PATH`). Per packet a plugin can let it pass,
 `Drop()` it, `Replace()` it, or queue extra packets `ToClient()` / `ToServer()`.
 
-**Writing one.** Reference `src/FiestaProxy` (see `plugins/Bridge2026/Bridge2026.csproj`), implement
+**Writing one.** Reference `src/FiestaProxy` (with `Private=false` and `EnableDynamicLoading`), implement
 `IProxyPlugin` + `IPluginSession`, build, and copy the DLL into `plugins/`.
 
-### Bridge2026 - the 2026 client on a 2016 server
+### 2026 clients (no plugin)
 
-`plugins/Bridge2026` lets an **unmodified 2026 Fiesta client** (US 10.6.x, or the German build) play on a
-**2016 server**. The two builds share a protocol but not its layouts: structs grew, the USER department was
-renumbered, and the 2026 client opens with handshakes the 2016 server has never heard of. The plugin sits on
-`bridge` routes in front of Login, WorldManager and **every** zone, and translates both directions: the login
-and world-list handshakes, the avatar list, map login (checksums swapped for the server's), mob and damage
-records, inventory records, the charged-item list, quest dialogs, and more. It drops 2026-only opcodes the 2016
-server would hang up on.
+Until 2026-10-04 a `Bridge2026` plugin here translated the 2026 client's protocol for the 2016 servers. That
+translation now lives in the servers themselves - the hook plugins `login_bridge26`, `wm_bridge26` and `bridge26` of
+[ik-fiesta-patch-recipes](https://github.com/IkaronClaude/ik-fiesta-patch-recipes), which read everything they need from
+the tables the servers load (no data files). Login and WorldManager tell the two clients apart per session, so 2016
+and 2026 clients can play side by side. The proxy needs nothing extra for either: its native rewriters above cover
+both clients' address frames. It is only needed where the servers' ports are not reachable directly.
 
-It is the client half of **[Fiesta2026on2016](https://github.com/IkaronClaude/Fiesta2026on2016)**, which
-builds the server half (the 2026 content merged onto the 2016 data). See that repo's README for the whole setup.
+The plugin's translators live on in `tests/Bridge2026.Tests/Reference/` as the byte-for-byte reference the hooks
+are checked against (`ZoneHookParityTests`).
 
 **Run it (Windows, next to the server):**
 
 ```powershell
-.\run-bridge.ps1 -Advertise <address the CLIENT reaches this machine on> -XorTable <xor-table.hex>
-#   -Server 127.0.0.1      where the 2016 server listens (default: this machine)
-#   -PacketLog:$false      the per-frame trace is on by default (it is how every layout here was measured)
-#   -NoDialogClose         for a client carrying the client-2026-npc-dialog-self-close patch
+.\run-bridge.ps1 -Advertise <address the CLIENT reaches this machine on>
+#   -Server 127.0.0.1      where the server listens (default: this machine)
+#   -PacketLog:$false      the per-frame trace is on by default
 ```
 
-The script publishes the proxy into `run/`, builds the plugin into `run/plugins/`, sets the routes and settings
-below, and starts it. Natively rather than in Docker because Docker Desktop on Windows publishes ports to
-127.0.0.1 only, which a game client on another machine cannot reach; on Linux, or for a Docker deployment,
-`deploy/bridge2026/docker-compose.yml` does the same (settings in `deploy/bridge2026/.env`, see `.env.example`).
-
-Then point the 2026 client at the bridge: `Fiesta.exe -i <advertise address> -p 19010`.
-
-**Routes.** Every listener is the server's port **+10000**, and every endpoint the servers advertise is shifted
-by the same `PORT_OFFSET`, so the client always comes back through the bridge. **Every zone needs a route**, not
-just the one a character logs into: a map change hands the client the destination zone's address, and with no
-listener there the client hangs at 0 % on the loading screen.
-
-```
-19010:Login:<server>:9010:bridge;19013:WorldManager_0:<server>:9013:bridge;
-19016:Zone_0_0:<server>:9016:bridge;19019:Zone_0_1:<server>:9019:bridge; ... one per zone
-```
-
-**Settings** (`FIESTAPROXY_PLUGIN_BRIDGE2026_*`):
-
-| key | purpose |
-| --- | --- |
-| `LOGIN_PORT` | the listen port that is the login stage (default 9010; the script uses 19010) |
-| `ADVERTISE` | the host the client should dial for WM and zones - the client's view of this machine, never 127.0.0.1 |
-| `PORT_OFFSET` | added to every port handed to the client (10000) |
-| `ITEM_CLASSES` | `item-classes.txt` (required) - see *Data files* |
-| `QUEST_REWARD_INDEX` | `quest-reward-index.txt` - see *Data files* |
-| `EQUIP_FOLD` | `equip-fold.txt` - see *Data files* |
-| `QUEST_COUNTER_ROWS` | `quest-counter-rows.txt` - see *Data files* |
-| `OPCODES` | FiestaLib-Reloaded's `docs/extracted/merged/all-enums.json` (required): the opcodes the 2016 build defines; without it nothing is filtered and the server hangs up on the first 2026-only frame |
-| `CHECKSUMS` | `zone-checksums.txt` (optional, legacy) - see *Data files* |
-| `WORLD_STATUS` | force every world row's status byte (testing only) |
-
-`BRIDGE2026_CLOSE_DIALOG=0` (the script's `-NoDialogClose`) stops the bridge sending the 2026 client its
-quest-page close (`0x442E`).
-
-### Data files (generated from YOUR files - never shipped)
-
-This repository ships **no game data**. Everything the plugin needs to know about your server and client is generated
-locally from your own files and read at start-up (the files are gitignored; `deploy/bridge2026/` is where the scripts
-look). Each is plain text, `#` starts a comment:
-
-| file | line format | what it is | generated from |
-| --- | --- | --- | --- |
-| `item-classes.txt` | `<item id> <class>` | item id -> the 2026 client's ItemInfo `Class`; the client sizes each inventory record by it | your 2026 client's `ressystem/ItemInfo.shn` |
-| `quest-reward-index.txt` | `<quest> <2026 reward row> <2016 reward slot>` | maps the 2026 client's chosen-reward index to the 2016 `QUEST_DATA.Reward` slot (only quests with a choice) | your 2026 client's `QuestReward.shn` + your server's `QuestData.shn` |
-| `equip-fold.txt` | `fold <2026 slot> <2016 slot>` / `item <item id> <2026 slot>` | the 2026 equip slots your server folds into 2016 slots, and the items drawn at them (so an unequip clears the right slot) | your 2026 client's `ItemInfo.shn` + your merge's slot map |
-| `quest-counter-rows.txt` | `<quest> <row for counter 1> ... <row for counter 5>` | where each zone kill counter sits in the 2026 client's `QuestEndNpc` rows, for quests where they differ | your 2026 client's `QuestEndNpc.shn` + your server's `QuestData.shn` |
-| `zone-checksums.txt` | 49 x `<32 hex>` in the zone's order | OPTIONAL, legacy: the table checksums a STOCK 2016 zone compares at map login; with it set, the bridge swaps them into the client's login. Leave it unset when the zone runs the `client_tables` hook plugin (ik-fiesta-patch-recipes), which registers the client's own checksums - a stale file here causes "Client has been illegally manipulated" | your server's `9Data/Shine` (MD5 of header + decrypted body per table) |
-| `all-enums.json` (`OPCODES`) | JSON | the protocol's opcode names per department | your server PDBs, via FiestaLib-Reloaded's extractor (see its README) |
-
-The first five are written by **`tools/bridge_data/bridge_data.py`** (in this repo; standalone - Python 3 only),
-run against your own trees:
-
-```bash
-python tools/bridge_data/bridge_data.py --server <your server>/9Data --client26 <your 2026 client folder> --out deploy/bridge2026
-```
-
-`EQUIP_REMAP` at the top of it is the 2026 -> 2016 equip-slot fold; edit it if your server folds differently.
-
-Rerun it whenever your server or client tables change. The formats above are complete, so any tool that reads your
-tables can produce the files instead.
+Every listener is the server's port **+10000** (`rewrite` routes), and every endpoint the servers advertise is
+handed out with the same offset, so the client always comes back through the proxy. **Every zone needs a route**: a
+map change hands the client the destination zone's address. On Linux or in Docker,
+`deploy/bridge2026/docker-compose.yml` does the same (settings in `.env`, see `.env.example`).
 
 ## Build
 

@@ -3,6 +3,7 @@ using FiestaLibReloaded.Networking;
 using FiestaProxy.Config;
 using FiestaProxy.Crypto;
 using FiestaProxy.Plugins;
+using FiestaProxy.Rewrites;
 
 namespace FiestaProxy.Net;
 
@@ -37,6 +38,9 @@ internal sealed class BridgePump
     private readonly ProxyConfig _config;
     private readonly string _service;
     private readonly IReadOnlyList<IPluginSession> _sessions;
+    // the native address rewrites run here too (after the plugins), so a bridge route is a superset of a rewrite route:
+    // with no plugin loaded it still hands the client the proxy's endpoints
+    private readonly PacketRewriterRegistry _rewriters;
 
     private readonly SemaphoreSlim _clientWrite = new(1, 1);
     private readonly SemaphoreSlim _serverWrite = new(1, 1);
@@ -52,6 +56,7 @@ internal sealed class BridgePump
         _config = config;
         _service = service;
         _sessions = sessions;
+        _rewriters = PacketRewriterRegistry.Default(config);
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -114,6 +119,7 @@ internal sealed class BridgePump
 
                 if (ctx.Forwarded is { } forward)
                 {
+                    if (!fromClient) forward = _rewriters.Apply(forward);
                     if (!ReferenceEquals(forward, packet))
                         PacketLog.Info($"[{_service}] {arrow} [translated] opcode=0x{forward.Opcode:X4} payload_len={forward.Payload.Length}  {PacketLog.Hex(forward.Payload)}");
                     if (fromClient) await SendToServerAsync(forward, ct);
