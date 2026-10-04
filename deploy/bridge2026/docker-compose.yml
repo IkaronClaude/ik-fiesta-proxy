@@ -53,3 +53,8 @@ services:
       PROXY_ROUTES: "19010:Login:stack:9010:rewrite;19013:WorldManager_0:stack:9013:rewrite;19019:Zone_0_0:stack:9019:rewrite"
       PUBLIC_IP: ${ADVERTISE_IP}
       PROXY_PACKET_LOG: ${PACKET_LOG:-0}
+      # The packet log decrypts the client side only with the XOR table (BYO - the repo ships none); proxying does not
+      # need it. To read client frames in the log, uncomment both lines and set XOR_TABLE in .env:
+      # XOR_TABLE_PATH: /config/xor-table.hex
+    # volumes:
+    #   - ${XOR_TABLE}:/config/xor-table.hex:ro

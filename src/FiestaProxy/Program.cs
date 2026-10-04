@@ -76,6 +76,11 @@ internal static class Program
             Log.Info(config.XorTable is null
                 ? "  XOR table not configured (BYO via XOR_TABLE_PATH / XOR_TABLE_HEX) — running NullCipher only"
                 : $"  XOR table loaded: {config.XorTable.Length} bytes (BYO)");
+            // Rewrite routes never need it (server->client is plaintext and the client's bytes pass through as they
+            // are) - only the packet log does, to show what the client sent.
+            if (config.PacketLogEnabled && config.XorTable is null)
+                Log.Warn("  packet log is on but there is NO XOR table: client->server frames are logged ENCRYPTED "
+                         + "(set XOR_TABLE_PATH / XOR_TABLE_HEX to read them; proxying itself does not need it)");
         }
         if (config.S2sRoutes.Count > 0)
         {
