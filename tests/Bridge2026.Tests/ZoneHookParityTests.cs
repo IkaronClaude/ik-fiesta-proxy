@@ -38,6 +38,12 @@ public class ZoneHookParityTests
         [0x3c03] = T.ShopTable2016To2026, [0x3c04] = T.ShopTable2016To2026, [0x3c06] = T.ShopTable2016To2026,
         [0x3c09] = T.ShopTable2016To2026, [0x3c0a] = T.ShopTable2016To2026, [0x3c0b] = T.ShopTable2016To2026,
         [Op.ClientBase] = p => T.ClientBase2016To2026(p, T.ClientBaseUs),
+        // batch 5 (the US width; the zone logs the record BEFORE it fills the states >= 792 in)
+        [Op.RegenMob] = p => p.Length == 149 ? T.RegenMobRow2016To2026(p, 1) : null,
+        [Op.MobCmd] = p => T.MobCmd2016To2026(p, 1),
+        [Op.RegenMover] = p => T.RegenMover2016To2026(p, 1),
+        [Op.LoginCharacter] = p => T.LoginCharacter2016To2026(p, 1),
+        [Op.CharacterList] = p => T.CharacterList2016To2026(p, 1),
     };
 
     /// <summary>quest-counter-rows.txt (tools/bridge_data.py) - the same file the zone loads: BRIDGE26_COUNTER_ROWS</summary>

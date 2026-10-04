@@ -25,7 +25,6 @@ internal sealed class Bridge2026Session : IPluginSession
 {
 
     private readonly Bridge2026Plugin _plugin;
-    private readonly ExtraAbStates _extraStates = new();
     private readonly PluginSessionInfo _info;
     private readonly bool _isLoginStage;
 
@@ -335,7 +334,6 @@ internal sealed class Bridge2026Session : IPluginSession
         // SOMEONESWING_DAMAGE, 0x243C DOTDAMAGE, 0x2452 SKILLBASH_HIT_DAMAGE, 0x2402 TARGETINFO; batch 2: the four
         // SKILLBASH *_START frames 0x244E / 0x2450 / 0x244F / 0x2451. Their T.* translators stay
         // as the reference ZoneHookParityTests checks the zone against.
-        _extraStates.Observe(p.Opcode, payload);   // states >= 792 per handle, for the brief-info bitset below
         switch (p.Opcode)
         {
             case Op.VersionAck16:
@@ -409,22 +407,8 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(cs);
                 return;
 
-            case Op.RegenMob:
-                ctx.Replace(T.RegenMobRow2016To2026(payload, UsExtra));
-                return;
-
-            case Op.MobCmd when T.MobCmd2016To2026(payload, UsExtra) is { } mc:
-                ctx.Replace(mc);
-                return;
-
-            case Op.RegenMover when T.RegenMover2016To2026(payload, UsExtra) is { } rm:
-                ctx.Replace(rm);
-                return;
-
-            case Op.LoginCharacter when T.LoginCharacter2016To2026(payload, UsExtra) is { } lc:
-                _extraStates.Fill(lc, 0, T.LoginCharacterExtraBitsAt);
-                ctx.Replace(lc);
-                return;
+            // MOVED TO THE ZONE (bridge26 batch 5): the briefinfo records REGENMOB / MOB / REGENMOVER / LOGINCHARACTER /
+            // CHARACTER (US width; the zone learns the states >= 792 itself and fills them into LOGINCHARACTER).
 
             // One item at the end of the packet. Relayed untouched, an enchantable item (armour, weapon, ...) is
             // one byte short and the 2026 client reads its option list out of place: hovering such an item
@@ -521,16 +505,6 @@ internal sealed class Bridge2026Session : IPluginSession
             // MOVED TO THE ZONE (bridge26 batch 3): the quest DOING list (+ 0x110F tracker list) and the REPEAT list.
             // MOVED TO THE ZONE (bridge26 batch 4): CHAR_CLIENT_BASE (the US 362 B), the CHARGEDBUFF list + BUFFSTART /
             // BUFFTERMINATE, and the six SHOPOPEN tables.
-
-            case Op.CharacterList when T.CharacterList2016To2026(payload, UsExtra) is { } cl:
-                for (int i = 0, len = T.LoginCharacter2026Length(UsExtra); 1 + (i + 1) * len <= cl.Length; i++)
-                {
-                    var rec = new byte[len];
-                    Array.Copy(cl, 1 + i * len, rec, 0, len);
-                    if (_extraStates.Fill(rec, 0, T.LoginCharacterExtraBitsAt) > 0) Array.Copy(rec, 0, cl, 1 + i * len, len);
-                }
-                ctx.Replace(cl);
-                return;
 
             case Op.CharLoginAck when payload.Length >= 18:
             {
