@@ -409,11 +409,6 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(cs);
                 return;
 
-            // Always the US width: the bridge targets the US build (the German client is for capturing only).
-            case Op.ClientBase when T.ClientBase2016To2026(payload, T.ClientBaseUs) is { } cb:
-                ctx.Replace(cb);
-                return;
-
             case Op.RegenMob:
                 ctx.Replace(T.RegenMobRow2016To2026(payload, UsExtra));
                 return;
@@ -466,18 +461,6 @@ internal sealed class Bridge2026Session : IPluginSession
                 if (T.ClientItem2016To2026(payload) is { } ci) ctx.Replace(ci);
                 return;
             }
-
-            case Op.ChargedBuff when T.ChargedBuff2016To2026(payload) is { } cbf:
-                ctx.Replace(cbf);
-                return;
-
-            case Op.ChargedBuffStart when T.ChargedBuffStart2016To2026(payload) is { } cbs:
-                ctx.Replace(cbs);
-                return;
-
-            case Op.ChargedBuffTerminate when T.ChargedBuffTerminate2016To2026(payload) is { } cbt:
-                ctx.Replace(cbt);
-                return;
 
             // Counted record lists: the count widens to u32 and the records take their 2026 widths.
             case Op.SellItemList or Op.GuildStorageOpen or Op.BoothSearchItemList or Op.AcademyRewardStorageOpen
@@ -536,6 +519,8 @@ internal sealed class Bridge2026Session : IPluginSession
                 return;
 
             // MOVED TO THE ZONE (bridge26 batch 3): the quest DOING list (+ 0x110F tracker list) and the REPEAT list.
+            // MOVED TO THE ZONE (bridge26 batch 4): CHAR_CLIENT_BASE (the US 362 B), the CHARGEDBUFF list + BUFFSTART /
+            // BUFFTERMINATE, and the six SHOPOPEN tables.
 
             case Op.CharacterList when T.CharacterList2016To2026(payload, UsExtra) is { } cl:
                 for (int i = 0, len = T.LoginCharacter2026Length(UsExtra); 1 + (i + 1) * len <= cl.Length; i++)
@@ -570,10 +555,6 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(patched);
                 return;
             }
-
-            case var op when Array.IndexOf(Op.ShopTables, op) >= 0 && T.ShopTable2016To2026(payload) is { } st:
-                ctx.Replace(st);
-                return;
 
             case Op.MapLoginFail:
                 _plugin.Warn($"[{_info.ServiceName}] MAP_LOGINFAIL_ACK {Convert.ToHexString(payload)}");

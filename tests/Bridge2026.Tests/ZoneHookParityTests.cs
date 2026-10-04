@@ -31,6 +31,13 @@ public class ZoneHookParityTests
         // batch 3: the zone strips the TRACKED bits first (QuestTracker.TakeTracked), then converts the list
         [Op.QuestDoing] = p => { var c = (byte[])p.Clone(); QuestTracker.TakeTracked(c, new()); return T.QuestDoing2016To2026(c, CounterRows); },
         [Op.QuestRepeat] = p => T.QuestRepeat2016To2026(p, CounterRows),
+        // batch 4
+        [Op.ChargedBuff] = T.ChargedBuff2016To2026,
+        [Op.ChargedBuffStart] = T.ChargedBuffStart2016To2026,
+        [Op.ChargedBuffTerminate] = T.ChargedBuffTerminate2016To2026,
+        [0x3c03] = T.ShopTable2016To2026, [0x3c04] = T.ShopTable2016To2026, [0x3c06] = T.ShopTable2016To2026,
+        [0x3c09] = T.ShopTable2016To2026, [0x3c0a] = T.ShopTable2016To2026, [0x3c0b] = T.ShopTable2016To2026,
+        [Op.ClientBase] = p => T.ClientBase2016To2026(p, T.ClientBaseUs),
     };
 
     /// <summary>quest-counter-rows.txt (tools/bridge_data.py) - the same file the zone loads: BRIDGE26_COUNTER_ROWS</summary>
