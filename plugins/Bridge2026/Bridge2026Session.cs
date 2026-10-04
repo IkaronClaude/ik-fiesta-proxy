@@ -56,6 +56,10 @@ internal sealed class Bridge2026Session : IPluginSession
         }
     }
 
+    /// <summary>A zone link: the zone hook (bridge26) translates its requests itself - map login, the 2026 logout
+    /// opcodes, and opcodes the 2016 zone has no handler for (dropped there, not here).</summary>
+    private bool IsZoneLink => _info.ServiceName.StartsWith("Zone_", StringComparison.Ordinal);
+
     /// <summary>True for the US 10.6.4 build, whose structs are wider than the German build's.</summary>
     private bool IsUsBuild => _shift != 0;
 
@@ -141,7 +145,7 @@ internal sealed class Bridge2026Session : IPluginSession
 
         // Logging out / back to character select. Same one-byte payload, different number - see Opcodes.
         // Only outside the login stage: there the client has not got far enough to log out of anything.
-        if (p.Opcode == Op.C26NormalLogout && !_isLoginStage && payload.Length == 1)
+        if (p.Opcode == Op.C26NormalLogout && !_isLoginStage && !IsZoneLink && payload.Length == 1)
         {
             ctx.Replace(new FiestaPacket(Op.NormalLogout16, payload));
             _plugin.Log($"[{_info.ServiceName}] 0x0C15 -> NC_USER_NORMALLOGOUT_CMD (type {payload[0]})");
@@ -155,7 +159,7 @@ internal sealed class Bridge2026Session : IPluginSession
         // never logged the character out, the world manager kept PlayingCharNo, and re-entering from character
         // select failed with CHAR_LOGINFAIL 0x0145 ("map is under maintenance") until a full relog.
         // Unwrapped into the 2016 NC_USER_NORMALLOGOUT_CMD, exactly what the countdown path sends.
-        if (p.Opcode == Op.C26WrappedCmd && !_isLoginStage && payload.Length >= 2)
+        if (p.Opcode == Op.C26WrappedCmd && !_isLoginStage && !IsZoneLink && payload.Length >= 2)
         {
             var inner = BitConverter.ToUInt16(payload, 0);
             if (inner == Op.C26NormalLogout && payload.Length == 3)
@@ -250,23 +254,11 @@ internal sealed class Bridge2026Session : IPluginSession
             return;                                       // forwarded unchanged
         }
 
-        if (p.Opcode == Op.MapLoginReq)
-        {
-            var sums = _plugin.Checksums;
-            if (sums.Count == 0)
-            {
-                // no CHECKSUMS file: the zone checks the client's own checksums (zone plugin client_checksums) - forward
-                // them, each in its table's zone slot
-                if (T.MapLogin2026To2016Mapped(payload) is { } mm) ctx.Replace(mm);
-                else _plugin.Warn($"[{_info.ServiceName}] MAP_LOGIN_REQ of {payload.Length} B, not 1718 - passed through untranslated");
-                return;
-            }
-            if (T.MapLogin2026To2016(payload, sums) is { } ml) ctx.Replace(ml);     // legacy: stock zone, swap
-            return;
-        }
+        // MOVED TO THE ZONE (bridge26 batch 7): MAP_LOGIN_REQ 1718 -> 1590 (the client's checksums in the zone's slots), the
+        // 2026 logout opcodes 0x0C15 / wrapped 0x0C23 on the zone link, and dropping opcodes the zone has no handler for.
 
         // Anything the 2016 build has no opcode for would make the server hang up.
-        if (!_plugin.IsKnownTo2016(p.Opcode) && !Op.HandledByZonePlugins.Contains(p.Opcode))
+        if (!IsZoneLink && !_plugin.IsKnownTo2016(p.Opcode) && !Op.HandledByZonePlugins.Contains(p.Opcode))
         {
             _plugin.Log($"[{_info.ServiceName}] dropped 0x{p.Opcode:X4} ({payload.Length} B): no such opcode in the 2016 build");
             ctx.Drop();
