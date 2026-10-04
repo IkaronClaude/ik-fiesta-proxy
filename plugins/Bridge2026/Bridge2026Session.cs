@@ -37,33 +37,7 @@ internal sealed class Bridge2026Session : IPluginSession
     private byte _world;
     private readonly Dictionary<byte, uint> _avatars = new();   // slot -> chrregnum
     private readonly HashSet<byte> _usedSlots = new();
-    private readonly HashSet<int> _foldedEmpty = new();         // 2026 equip slots this client already has empty
 
-
-    /// <summary>
-    /// NC_ITEM_EQUIPCHANGE_CMD {u16 key, u8 2016 equip slot, item record} names the SERVER's slot, but the 2026
-    /// client draws an equipped item at the item's own 2026 Equip (Fiesta.exe 0x5AB150), and the server folds
-    /// 2026 slots 30-44 into 2016 ones (Wings of Darkness: 2026 slot 34, server slot 9). An unequip of slot 9 then
-    /// cleared the client's empty slot 9 and the wings stayed drawn at 34 (Q29, the client's unequip path
-    /// 0x761F20 clears only the slot it is told). So when a 2016 slot changes, every 2026 slot folded into it is
-    /// cleared too - except the one the newly equipped item itself is drawn at. Each is cleared at most once
-    /// until something is drawn there again.
-    /// </summary>
-    private void ClearFoldedSlots(PluginPacketContext ctx, byte[] payload)
-    {
-        if (payload.Length < 5) return;
-        var folded = _plugin.FoldedInto(payload[2]);
-        if (folded.Count == 0) return;
-        var item = BitConverter.ToUInt16(payload, 3);
-        var drawnAt = item == 0xFFFF ? -1 : _plugin.FoldedEquipOf(item);
-        if (drawnAt >= 0) _foldedEmpty.Remove(drawnAt);
-        foreach (var slot in folded)
-        {
-            if (slot == drawnAt || !_foldedEmpty.Add(slot)) continue;
-            ctx.ToClient(Op.ItemEquipChange, new byte[] { payload[0], payload[1], (byte)slot, 0xFF, 0xFF });
-            _plugin.Log($"[{_info.ServiceName}] 0x3002 slot {payload[2]}: also cleared the folded 2026 slot {slot}");
-        }
-    }
 
     public Bridge2026Session(Bridge2026Plugin plugin, PluginSessionInfo info)
     {
@@ -410,79 +384,10 @@ internal sealed class Bridge2026Session : IPluginSession
             // MOVED TO THE ZONE (bridge26 batch 5): the briefinfo records REGENMOB / MOB / REGENMOVER / LOGINCHARACTER /
             // CHARACTER (US width; the zone learns the states >= 792 itself and fills them into LOGINCHARACTER).
 
-            // One item at the end of the packet. Relayed untouched, an enchantable item (armour, weapon, ...) is
-            // one byte short and the 2026 client reads its option list out of place: hovering such an item
-            // after moving it crashed the client in the tooltip builder (2026-09-17, item 453).
-            case Op.ItemCellChange or Op.ItemEquipChange when _plugin.HasItemClasses:
-            {
-                var at = p.Opcode == Op.ItemCellChange ? 4 : 3;
-                if (ItemAttr.TrailingItem2016To2026(payload, at, _plugin.ClassOf) is { } moved)
-                {
-                    if (moved.Length != payload.Length) ctx.Replace(moved);
-                }
-                else if (payload.Length > at + 2)
-                    _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4}: item {BitConverter.ToUInt16(payload, at)} "
-                                 + $"(class {_plugin.ClassOf(BitConverter.ToUInt16(payload, at))}) not translated, "
-                                 + $"{payload.Length - at - 2} attribute bytes");
-                if (p.Opcode == Op.ItemEquipChange) ClearFoldedSlots(ctx, payload);
-                return;
-            }
+            // MOVED TO THE ZONE (bridge26 batch 6): the item records - ITEM_CELLCHANGE / EQUIPCHANGE (+ the folded-slot clears),
+            // CHAR_CLIENT_ITEM, the counted record lists (sell / guild storage / booth search / academy reward / reward inventory /
+            // storage) and the single items (sell insert / trade upboard / collect card), from the 2026 ItemInfo the zone reads.
 
-            case Op.ClientItem:
-            {
-                // Translate the RECORDS, not just the header. The 2026 client sizes each record from the
-                // item's attribute class rather than the record's own size byte, so a 2016 box walks at the
-                // wrong stride and only its first item appears.
-                if (_plugin.HasItemClasses)
-                {
-                    var full = ItemAttr.ClientItem2016To2026(payload, _plugin.ClassOf, out var refusal);
-                    if (full is not null) { ctx.Replace(full); return; }
-                    _plugin.Warn($"[{_info.ServiceName}] inventory box {(payload.Length > 1 ? payload[1] : -1)} "
-                                 + $"not translated: {refusal}. Its records will be misread past that point.");
-                }
-                // Header-only fallback: better than nothing for an empty box, and visibly wrong for a full
-                // one, which is preferable to silently mangling it.
-                if (T.ClientItem2016To2026(payload) is { } ci) ctx.Replace(ci);
-                return;
-            }
-
-            // Counted record lists: the count widens to u32 and the records take their 2026 widths.
-            case Op.SellItemList or Op.GuildStorageOpen or Op.BoothSearchItemList or Op.AcademyRewardStorageOpen
-                when IsUsBuild && _plugin.HasItemClasses:
-            {
-                var (countAt, itemAt) = p.Opcode switch
-                {
-                    Op.GuildStorageOpen => (18, 3),
-                    Op.AcademyRewardStorageOpen => (10, 3),
-                    Op.BoothSearchItemList => (2, 15),
-                    _ => (0, 3),
-                };
-                if (ItemAttr.RecordList2016To2026(payload, countAt, itemAt, _plugin.ClassOf, out var why) is { } list)
-                    ctx.Replace(list);
-                else
-                    _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4} not translated: {why}");
-                return;
-            }
-            case Op.SellItemInsert or Op.TradeOppositUpboard or Op.CollectCardOpen when _plugin.HasItemClasses:
-            {
-                var at = p.Opcode switch { Op.SellItemInsert => 2, Op.TradeOppositUpboard => 1, _ => 3 };
-                if (ItemAttr.LeadingItem2016To2026(payload, at, _plugin.ClassOf) is { } one)
-                {
-                    if (!one.AsSpan().SequenceEqual(payload)) ctx.Replace(one);
-                }
-                else
-                    _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4}: item not translated ({payload.Length} B)");
-                return;
-            }
-            case Op.RewardInvenAck or Op.MenuOpenStorage when IsUsBuild && _plugin.HasItemClasses:
-            {
-                var countAt = p.Opcode == Op.MenuOpenStorage ? 11 : 0;
-                if (ItemAttr.RecordList2016To2026(payload, countAt, _plugin.ClassOf, out var why) is { } list)
-                    ctx.Replace(list);
-                else
-                    _plugin.Log($"[{_info.ServiceName}] 0x{p.Opcode:X4} not translated: {why}");
-                return;
-            }
             case Op.GuildMemberList:
                 if (T.GuildMemberList2016To2026(payload, out var lastChunk) is { } gml)
                 {
@@ -498,9 +403,6 @@ internal sealed class Bridge2026Session : IPluginSession
                 ctx.Replace(gai);
                 return;
 
-            case Op.RewardInvenAck when IsUsBuild && T.RewardInven2016To2026(payload) is { } ri:
-                ctx.Replace(ri);                       // no item table loaded: the empty case still works
-                return;
 
             // MOVED TO THE ZONE (bridge26 batch 3): the quest DOING list (+ 0x110F tracker list) and the REPEAT list.
             // MOVED TO THE ZONE (bridge26 batch 4): CHAR_CLIENT_BASE (the US 362 B), the CHARGEDBUFF list + BUFFSTART /

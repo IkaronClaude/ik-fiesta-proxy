@@ -44,7 +44,39 @@ public class ZoneHookParityTests
         [Op.RegenMover] = p => T.RegenMover2016To2026(p, 1),
         [Op.LoginCharacter] = p => T.LoginCharacter2016To2026(p, 1),
         [Op.CharacterList] = p => T.CharacterList2016To2026(p, 1),
+        // batch 6: items, with the item classes the zone reads from the 2026 ItemInfo (here: BRIDGE26_ITEM_CLASSES, "CLASS id class"
+        // lines); null = the zone leaves the packet as it is
+        [Op.ItemCellChange] = p => Same(p, ItemAttr.TrailingItem2016To2026(p, 4, ClassOf)),
+        [Op.ItemEquipChange] = p => Same(p, ItemAttr.TrailingItem2016To2026(p, 3, ClassOf)),
+        [Op.ClientItem] = p => ItemAttr.ClientItem2016To2026(p, ClassOf, out _) ?? T.ClientItem2016To2026(p),
+        [Op.SellItemList] = p => ItemAttr.RecordList2016To2026(p, 0, 3, ClassOf, out _),
+        [Op.GuildStorageOpen] = p => ItemAttr.RecordList2016To2026(p, 18, 3, ClassOf, out _),
+        [Op.BoothSearchItemList] = p => ItemAttr.RecordList2016To2026(p, 2, 15, ClassOf, out _),
+        [Op.AcademyRewardStorageOpen] = p => ItemAttr.RecordList2016To2026(p, 10, 3, ClassOf, out _),
+        [Op.RewardInvenAck] = p => ItemAttr.RecordList2016To2026(p, 0, ClassOf, out _),
+        [Op.MenuOpenStorage] = p => ItemAttr.RecordList2016To2026(p, 11, ClassOf, out _),
+        [Op.SellItemInsert] = p => Unchanged(p, ItemAttr.LeadingItem2016To2026(p, 2, ClassOf)),
+        [Op.TradeOppositUpboard] = p => Unchanged(p, ItemAttr.LeadingItem2016To2026(p, 1, ClassOf)),
+        [Op.CollectCardOpen] = p => Unchanged(p, ItemAttr.LeadingItem2016To2026(p, 3, ClassOf)),
     };
+
+    private static readonly Dictionary<int, int> Classes = LoadClasses();
+    private static int ClassOf(int id) => Classes.TryGetValue(id, out var c) ? c : -1;
+    private static Dictionary<int, int> LoadClasses()
+    {
+        var map = new Dictionary<int, int>();
+        var path = Environment.GetEnvironmentVariable("BRIDGE26_ITEM_CLASSES");
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return map;
+        foreach (var line in File.ReadLines(path))
+        {
+            var f = line.Split(' ');
+            if (f.Length == 3 && f[0] == "CLASS" && int.TryParse(f[1], out var id) && int.TryParse(f[2], out var c)) map[id] = c;
+        }
+        return map;
+    }
+    /// <summary>The zone sends a single-item packet as it was when the 2026 form has the same length (TrailingItem) or bytes (LeadingItem).</summary>
+    private static byte[]? Same(byte[] p, byte[]? t) => t is null || t.Length == p.Length ? null : t;
+    private static byte[]? Unchanged(byte[] p, byte[]? t) => t is null || t.AsSpan().SequenceEqual(p) ? null : t;
 
     /// <summary>quest-counter-rows.txt (tools/bridge_data.py) - the same file the zone loads: BRIDGE26_COUNTER_ROWS</summary>
     private static readonly Dictionary<int, int[]> CounterRowsMap = LoadCounterRows();
